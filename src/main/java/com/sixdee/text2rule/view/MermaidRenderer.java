@@ -35,7 +35,7 @@ public class MermaidRenderer implements TreeRenderer {
             printGraphRecursive(tree.getRoot(), sb);
             sb.append("---------------------");
 
-            logger.debug("Mermaid Graph:\n{}", sb.toString());
+            logger.info("Mermaid Graph:\n{}", sb.toString());
 
         } catch (Exception e) {
             logger.error("Error rendering Mermaid graph", e);

@@ -101,6 +101,14 @@ public class WorkflowState extends AgentState {
         this.data().put("currentConditionPromptKey", promptKey);
     }
 
+    public String getCurrentConditionPromptString() {
+        return (String) this.data().get("currentConditionPromptString");
+    }
+
+    public void setCurrentConditionPromptString(String promptString) {
+        this.data().put("currentConditionPromptString", promptString);
+    }
+
     public Double getConditionConsistencyScore() {
         return (Double) this.data().get("conditionConsistencyScore");
     }

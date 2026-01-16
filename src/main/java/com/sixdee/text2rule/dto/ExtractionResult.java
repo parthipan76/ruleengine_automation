@@ -72,9 +72,20 @@ public class ExtractionResult implements Serializable {
         this.schedule = schedule;
     }
 
+    @JsonProperty("rule")
+    private String rule;
+
+    public String getRule() {
+        return rule;
+    }
+
+    public void setRule(String rule) {
+        this.rule = rule;
+    }
+
     @Override
     public String toString() {
-        return "ExtractionResult{condition='" + condition + "', actions='" + actions +
+        return "ExtractionResult{rule='" + rule + "', condition='" + condition + "', actions='" + actions +
                 "', sampling='" + sampling + "', policy='" + policy + "', schedule='" + schedule + "'}";
     }
 }

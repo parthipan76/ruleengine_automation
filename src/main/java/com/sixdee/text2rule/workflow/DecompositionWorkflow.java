@@ -1,9 +1,11 @@
 package com.sixdee.text2rule.workflow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sixdee.text2rule.agent.ConditionExtractionAgent;
 import com.sixdee.text2rule.agent.ConsistencyAgent;
 import com.sixdee.text2rule.agent.DecompositionAgent;
 import com.sixdee.text2rule.agent.PromptRefinementAgent;
+import com.sixdee.text2rule.agent.ScheduleExtractionAgent;
 import com.sixdee.text2rule.agent.ValidationAgent;
 import com.sixdee.text2rule.config.PromptRegistry;
 import com.sixdee.text2rule.dto.DecompositionResult;
@@ -32,6 +34,8 @@ public class DecompositionWorkflow {
     private final DecompositionAgent decompositionAgent;
     private final ConsistencyAgent consistencyAgent;
     private final PromptRefinementAgent promptRefinementAgent;
+    private final ConditionExtractionAgent conditionExtractionAgent;
+    private final ScheduleExtractionAgent scheduleExtractionAgent;
     private final AsciiRenderer asciiRenderer;
     private final ObjectMapper objectMapper;
     private final double consistencyThreshold;
@@ -43,6 +47,8 @@ public class DecompositionWorkflow {
         this.decompositionAgent = new DecompositionAgent(lang4jService);
         this.consistencyAgent = new ConsistencyAgent(lang4jService);
         this.promptRefinementAgent = new PromptRefinementAgent(lang4jService);
+        this.conditionExtractionAgent = new ConditionExtractionAgent(lang4jService);
+        this.scheduleExtractionAgent = new ScheduleExtractionAgent(lang4jService);
         this.asciiRenderer = new AsciiRenderer();
         this.objectMapper = new ObjectMapper();
 
@@ -68,6 +74,12 @@ public class DecompositionWorkflow {
         workflow.addNode("decompose_agent", this::decomposeNode);
         workflow.addNode("consistency_check_decompose", this::consistencyCheckDecomposeNode);
         workflow.addNode("refine_decompose_prompt", this::refineDecomposePromptNode);
+
+        // Extraction nodes
+        workflow.addNode("condition_extract_agent", this::conditionExtractionNode);
+        workflow.addNode("consistency_check_condition", this::consistencyCheckConditionNode);
+        workflow.addNode("refine_condition_prompt", this::refineConditionPromptNode);
+        workflow.addNode("schedule_extract_agent", this::scheduleExtractionNode);
 
         // Start with validation
         workflow.addEdge(START, "validate_agent");
@@ -107,10 +119,10 @@ public class DecompositionWorkflow {
 
                     if (score != null && score >= consistencyThreshold) {
                         logger.info(
-                                "✓ Decomposition Consistency PASSED (score={}, threshold={}). Workflow complete.",
+                                "✓ Decomposition Consistency PASSED (score={}, threshold={}). Proceeding to Extraction.",
                                 score, consistencyThreshold);
-                        // STOP HERE for DecompositionWorkflow
-                        return CompletableFuture.completedFuture(END);
+                        // MOVED TO NEXT STEP: Condition Extraction
+                        return CompletableFuture.completedFuture("condition_extract_agent");
                     }
 
                     if (retryCount >= maxRetries) {
@@ -125,9 +137,62 @@ public class DecompositionWorkflow {
                             score, consistencyThreshold, retryCount + 1, maxRetries);
                     return CompletableFuture.completedFuture("refine_decompose_prompt");
                 },
-                Map.of("refine_decompose_prompt", "refine_decompose_prompt", END, END));
+                Map.of("refine_decompose_prompt", "refine_decompose_prompt",
+                        "condition_extract_agent", "condition_extract_agent",
+                        END, END));
 
         workflow.addEdge("refine_decompose_prompt", "decompose_agent");
+
+        // Extraction flow: Condition -> Consistency -> [Refine -> Condition] OR
+        // [Schedule]
+        // Condition -> Consistency
+        workflow.addConditionalEdges(
+                "condition_extract_agent",
+                state -> {
+                    if (state.isWorkflowFailed())
+                        return CompletableFuture.completedFuture(END);
+                    return CompletableFuture.completedFuture("consistency_check_condition");
+                },
+                Map.of("consistency_check_condition", "consistency_check_condition", END, END));
+
+        // Consistency Check logic
+        workflow.addConditionalEdges(
+                "consistency_check_condition",
+                state -> {
+                    if (state.isWorkflowFailed()) {
+                        return CompletableFuture.completedFuture(END);
+                    }
+
+                    Double score = state.getConditionConsistencyScore();
+                    int retryCount = state.getConditionRetryCount();
+                    if (score == null)
+                        score = 0.0;
+
+                    if (score >= consistencyThreshold) {
+                        logger.info(
+                                "✓ Condition Consistency PASSED (score={}, threshold={}). Proceeding to Schedule Extraction.",
+                                score, consistencyThreshold);
+                        return CompletableFuture.completedFuture("schedule_extract_agent");
+                    }
+
+                    if (retryCount >= maxRetries) {
+                        logger.warn("✗ Condition Max retries ({}) reached with score={}. Proceeding with best effort.",
+                                maxRetries, score);
+                        // Proceeding instead of ending, as we might have partial results
+                        return CompletableFuture.completedFuture("schedule_extract_agent");
+                    }
+
+                    logger.info(
+                            "✗ Condition Consistency FAILED (score={}, threshold={}). Retry {}/{}. Refining prompt...",
+                            score, consistencyThreshold, retryCount + 1, maxRetries);
+                    return CompletableFuture.completedFuture("refine_condition_prompt");
+                },
+                Map.of("refine_condition_prompt", "refine_condition_prompt",
+                        "schedule_extract_agent", "schedule_extract_agent",
+                        END, END));
+
+        workflow.addEdge("refine_condition_prompt", "condition_extract_agent");
+        workflow.addEdge("schedule_extract_agent", END);
 
         this.compiledGraph = workflow.compile();
         return this.compiledGraph;
@@ -245,6 +310,117 @@ public class DecompositionWorkflow {
         return CompletableFuture.completedFuture(Map.of(
                 "currentDecompositionPrompt", refinedPrompt,
                 "retryCount", currentRetry + 1));
+    }
+
+    // ===== EXTRACTION NODES =====
+
+    private static final String CONDITION_EXTRACTION_PROMPT_KEY = "condition_extraction_prompt";
+
+    // ... (fields remain same)
+
+    private CompletableFuture<Map<String, Object>> conditionExtractionNode(WorkflowState state) {
+        int retryCount = state.getConditionRetryCount();
+        logger.info("═══ CONDITION EXTRACTION AGENT (Attempt {}/{}) ═══", retryCount + 1, maxRetries + 1);
+        RuleTree<NodeData> tree = state.getTree();
+
+        String customPromptKey = state.getCurrentConditionPromptKey();
+        String customPromptString = state.getCurrentConditionPromptString();
+
+        if (customPromptString != null) {
+            logger.info("Using refined condition prompt string.");
+        }
+
+        return conditionExtractionAgent.execute(tree, customPromptKey, customPromptString)
+                .thenApply(conditionState -> {
+                    if (conditionState.isFailed()) {
+                        logger.warn("Condition Extraction failed or produced no updates.");
+                    } else {
+                        logger.info("Condition Extraction completed.");
+                    }
+
+                    // Capture output for consistency check/refinement (approximation since agent
+                    // updates tree in-place)
+                    // We might need to serialize children of NormalStatements nodes to get
+                    // "previousOutput" effectively
+                    // For now, we rely on tree state.
+
+                    return Map.of("tree", conditionState.getTree() != null ? conditionState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> consistencyCheckConditionNode(WorkflowState state) {
+        logger.info("═══ CONSISTENCY CHECK (Condition) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        if (tree == null) {
+            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
+        }
+
+        return consistencyAgent.execute(tree, "condition")
+                .thenApply(consistencyState -> {
+                    Double score = consistencyState.getConsistencyScore();
+                    if (score == null) {
+                        logger.warn("Condition consistency check returned null score, defaulting to 0.0");
+                        score = 0.0;
+                    }
+
+                    logger.info("Condition Consistency score: {}", score);
+                    String feedback = generateFeedback(tree, score, "condition");
+
+                    return Map.of(
+                            "conditionConsistencyScore", score,
+                            "conditionFeedback", feedback,
+                            "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> refineConditionPromptNode(WorkflowState state) {
+        int currentRetry = state.getConditionRetryCount();
+        logger.info("═══ PROMPT REFINEMENT (Condition - Retry {}/{}) ═══", currentRetry + 1, maxRetries);
+
+        String originalPrompt = state.getCurrentConditionPromptString();
+        if (originalPrompt == null || originalPrompt.trim().isEmpty()) {
+            // Fallback to registry if we don't have a refined one yet
+            String key = state.getCurrentConditionPromptKey();
+            if (key == null)
+                key = CONDITION_EXTRACTION_PROMPT_KEY;
+            originalPrompt = PromptRegistry.getInstance().get(key);
+        }
+
+        // We need input text for refinement. For conditions, the input is technically
+        // the text of NormalStatements nodes.
+        // However, prompt refinement agent typically takes one "input text".
+        // Using the root input is a reasonable proxy or we can aggregate
+        // NormalStatements inputs.
+        String inputText = state.getInput();
+        String previousOutput = ""; // We don't easily have the strict JSON output here without serialization, might
+                                    // skip or approximate
+        String feedback = state.getConditionFeedback();
+
+        String refinedPrompt = promptRefinementAgent.refinePrompt(originalPrompt, inputText, previousOutput, feedback,
+                currentRetry + 1);
+
+        if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
+            logger.warn("Condition prompt refinement failed, keeping original prompt");
+            refinedPrompt = originalPrompt;
+        } else {
+            logger.info("Successfully generated refined condition prompt");
+        }
+
+        return CompletableFuture.completedFuture(Map.of(
+                "currentConditionPromptString", refinedPrompt,
+                "conditionRetryCount", currentRetry + 1));
+    }
+
+    private CompletableFuture<Map<String, Object>> scheduleExtractionNode(WorkflowState state) {
+        logger.info("═══ SCHEDULE EXTRACTION AGENT (Dummy) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        return scheduleExtractionAgent.execute(tree)
+                .thenApply(scheduleState -> {
+                    logger.info("Schedule Extraction completed.");
+                    return Map.of("tree", scheduleState.getTree() != null ? scheduleState.getTree() : tree);
+                });
     }
 
     private String generateFeedback(RuleTree<NodeData> tree, Double score, String stage) {

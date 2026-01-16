@@ -77,9 +77,10 @@ public class ConditionExtractionAgent {
         }
 
         String customPromptKey = (String) state.data().get("customPromptKey");
+        String customPromptString = (String) state.data().get("customPromptString");
 
         try {
-            extractConditions(tree, customPromptKey);
+            extractConditions(tree, customPromptKey, customPromptString);
         } catch (Exception e) {
             logger.error("Error in extraction node", e);
             return CompletableFuture.completedFuture(Map.of("failed", true));
@@ -87,13 +88,13 @@ public class ConditionExtractionAgent {
         return CompletableFuture.completedFuture(Map.of("tree", tree));
     }
 
-    private void extractConditions(RuleTree<NodeData> tree, String customPromptKey) {
+    private void extractConditions(RuleTree<NodeData> tree, String customPromptKey, String customPromptString) {
         if (tree == null || tree.getRoot() == null)
             return;
-        processNode(tree.getRoot(), customPromptKey);
+        processNode(tree.getRoot(), customPromptKey, customPromptString);
     }
 
-    private void processNode(RuleNode<NodeData> node, String customPromptKey) {
+    private void processNode(RuleNode<NodeData> node, String customPromptKey, String customPromptString) {
         if (node == null)
             return;
 
@@ -106,13 +107,23 @@ public class ConditionExtractionAgent {
             logger.info("Extracting conditions for NormalStatements node: {}", conditionText);
 
             try {
-                // Use custom prompt key if provided, otherwise use default
-                String promptKey = (customPromptKey != null && !customPromptKey.trim().isEmpty())
-                        ? customPromptKey
-                        : DEFAULT_PROMPT_KEY;
+                String prompt;
+                if (customPromptString != null && !customPromptString.trim().isEmpty()) {
+                    prompt = customPromptString
+                            .replace("{{ $json['output.normal_statements'] }}", conditionText)
+                            .replace("{{ $json.input_text }}", conditionText);
+                    logger.info("Using provided custom prompt string");
+                } else {
+                    // Use custom prompt key if provided, otherwise use default
+                    String promptKey = (customPromptKey != null && !customPromptKey.trim().isEmpty())
+                            ? customPromptKey
+                            : DEFAULT_PROMPT_KEY;
 
-                String promptTemplate = PromptRegistry.getInstance().get(promptKey);
-                String prompt = promptTemplate.replace("{{ $json['output.normal_statements'] }}", conditionText);
+                    String promptTemplate = PromptRegistry.getInstance().get(promptKey);
+                    prompt = promptTemplate
+                            .replace("{{ $json['output.normal_statements'] }}", conditionText)
+                            .replace("{{ $json.input_text }}", conditionText);
+                }
 
                 String jsonResponse = lang4jService.generate(prompt);
 
@@ -136,8 +147,15 @@ public class ConditionExtractionAgent {
                     logger.info("Found {} conditions. Adding as children.", conditions.size());
 
                     for (ExtractionResult segment : conditions) {
-                        String childInput = "Condition: " + segment.getCondition() + " -> Action: "
-                                + segment.getActions();
+                        String childInput;
+                        if (segment.getRule() != null && !segment.getRule().trim().isEmpty()) {
+                            childInput = segment.getRule();
+                        } else {
+                            // Fallback for backward compatibility or if rule is missing
+                            childInput = "Condition: " + segment.getCondition() + " -> Action: "
+                                    + segment.getActions();
+                        }
+
                         NodeData conditionNode = new NodeData("Segment", "", "", node.getData().getModelName(), "",
                                 childInput);
                         node.addChild(new RuleNode<>(conditionNode));
@@ -157,23 +175,30 @@ public class ConditionExtractionAgent {
         // Recursively process children
         if (node.getChildren() != null) {
             for (RuleNode<NodeData> child : node.getChildren()) {
-                processNode(child, customPromptKey);
+                processNode(child, customPromptKey, customPromptString);
             }
         }
     }
 
     public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree) {
-        return execute(tree, null);
+        return execute(tree, null, null);
     }
 
     public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree, String customPromptKey) {
+        return execute(tree, customPromptKey, null);
+    }
+
+    public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree, String customPromptKey,
+            String customPromptString) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Map<String, Object> input = new HashMap<>();
                 input.put("tree", tree);
                 if (customPromptKey != null && !customPromptKey.trim().isEmpty()) {
                     input.put("customPromptKey", customPromptKey);
-                    logger.info("Using custom prompt key for condition extraction");
+                }
+                if (customPromptString != null && !customPromptString.trim().isEmpty()) {
+                    input.put("customPromptString", customPromptString);
                 }
                 return compiledGraph.invoke(input).orElse(null);
             } catch (Exception e) {

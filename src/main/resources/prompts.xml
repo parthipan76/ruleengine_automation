@@ -71,129 +71,109 @@ If you have multiple conditions, join them in ONE string with ", otherwise " bet
     </prompt>
 
     <prompt key="condition_extraction_prompt">
-        <![CDATA[# Telecom Campaign Rule Converter
+        <![CDATA[You are an assistant that converts a telecom campaign rule written in natural language into fully merged, human-readable campaign rules in JSON format.
 
-You are an assistant that converts a single telecom campaign rule statement written in natural language into a structured JSON format. Each part must be clearly separated and human-readable.
+Each output rule must represent only an actionable campaign outcome (i.e., something is sent or granted).
 
-## The JSON structure is:
-```json
-[{
-  "condition": "",
-  "actions": "",
-  "input_text": "",
-  "sampling": "",
-  "policy": "",
-  "schedule": ""
-}]
-```
+🎯 Objective
 
----
+Extract and expand the input into one or more merged rule sentences that explicitly include:
 
-## How to fill each field
+Eligibility criteria (who qualifies)
 
-### condition (Subscriber Conditions / KPI conditions)
-Represents subscriber-related filters or conditions or action .
-Typically includes account type, customer status, plan, device type, recharge thresholds, behavioral KPIs, or usage conditions.
+Location constraints (if any)
 
-**Think: "Who qualifies for this campaign?"**
+Conditional logic (IF / ELSE IF branches)
 
-**Example:**
-- "Subscriber has an account type of Postpaid"
-- "Customer status is INACTIVE or Grace"
-- "Recharge amount between 20 and 40 rupees"
+Marketing action (what is sent)
 
-### actions (Marketing Actions + Bonus/Benefits - Single Statement)
-Represents **both** what the campaign will do AND what benefits/rewards the subscriber receives, **combined into ONE single human-readable statement**.
+Benefit / reward (what is given)
 
-This field combines:
-1. **Communication actions**: sending SMS, emails, notifications, or triggering campaign messages
-2. **Bonus/Benefits**: rewards, incentives, free data, cashback, vouchers, or any promotional offers
-3. **Bonus conditions**: if there are specific conditions that trigger the bonus (e.g., "if recharge is above X"), include them in the same statement
+⚠️ Do NOT generate rules for “exclude”, “do nothing”, or default ELSE paths.
 
-**Think: "What will we send/give to the subscriber?"**
+🧾 Output JSON Structure
+[
+  {
+    "rule": "",
+    "input_text": ""
+  }
+]
 
-**Important: Combine all actions and benefits into ONE coherent sentence or statement, not a list.**
+🧠 Rule Construction Guidelines
+🔹 rule (MANDATORY)
 
-**Example:**
-- "Send a reactivation message with ID 21 through the SMS channel and provide a bonus of 5GB data as a benefit"
-- "Send promotional SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days"
-- "Trigger campaign notification and offer 10% cashback on next recharge above 50 rupees"
+Each rule must:
 
-### input_text (Original Rule Statement)
-This field contains the **complete original input statement** exactly as provided by the user.
+Be ONE complete grammatical sentence
 
-**Think: "What was the original rule that was given?"**
+Explicitly include eligibility criteria, such as:
 
-**Important: Copy the entire original input without modification.**
+Revenue / usage KPIs
 
-**Example:**
-- "Target prepaid users whose top recharge channel last month was mobile with recharge amount of 15 and total voice roaming for last 90 days is 100 min. Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days."
+Recharge thresholds
 
-### sampling (Sampling Logic)
-Represents any explicit sampling instructions.
+Location (city/region)
 
-**Example:** "Apply 50% random sampling to eligible subscribers"
+Subscriber attributes
 
-If nothing is stated, leave as `""`.
+Include exactly one final action
+(e.g., send SMS, trigger notification)
 
-### policy (Capping, Throttling, or Lead Policies)
-Represents any business rules like capping, throttling, or lead assignment policies.
+Represent one executable IF / ELSE IF branch
 
-**Example:** "Do not send more than 2 messages per subscriber per week"
+Be self-contained and auditable
 
-If nothing is stated, leave as `""`.
+❌ Do NOT:
 
-### schedule (Campaign Duration or Tracking Time)
-Represents any timing or scheduling instructions.
+Create a rule for exclusion or default ELSE
 
-**Example:** "Track for 1 day" or "Campaign runs from 1st to 7th October"
+Merge multiple outcomes into one rule
 
-If nothing is stated, leave as `""`.
+Use bullet points or lists
 
----
+Split conditions and actions into separate fields
 
-## Segmentation Rules / Guidelines
+✅ One rule = one positive campaign action
 
-- Each field must stand alone logically
-- **segments** = WHO qualifies (subscriber filters and conditions) - this remains as an array/list
-- **actions** = WHAT we send/give (communications + bonuses/benefits combined) - **this must be a single string statement, NOT a list**
-- **input_text** = The complete original input statement as-is
-- Preserve human-readable phrasing
-- If a part is missing in the statement, leave it as `""`
-- For segments, multiple conditions can remain as separate items in the array
-- For actions, ALL actions and benefits must be merged into ONE complete statement
+🔹 input_text (MANDATORY)
 
----
+Copy the entire original input statement exactly
 
-## Input Statement:
-```
-{{ $json['output.normal_statements'] }}
-```
+Do not modify wording, punctuation, or spacing
 
----
+Repeat the same input_text for all derived rules
 
-## Expected Output Format Example:
-```json
-[{
-  "condition": {}
-    "Target prepaid users whose top recharge channel last month was mobile Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days",
-},
-  "actions": "Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days",
-  "input_text": "Target prepaid users whose top recharge channel last month was mobile with recharge amount of 15 and total voice roaming for last 90 days is 100 min. Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days.",
-  "sampling": "",
-  "policy": "",
-  "schedule": ""
-},{
-  "condition": {}
-    "Target prepaid users whose top recharge channel last month was mobile Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 20 GB data for 15 days",
-},
-  "actions": "Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days",
-  "input_text": "Target prepaid users whose top recharge channel last month was mobile with recharge amount of 15 and total voice roaming for last 90 days is 100 min. Send promo through SMS with message ID 16 and provide benefit if their recharge amount is between 6 and 10 with a product of 10 GB data for 15 days.",
-  "sampling": "",
-  "policy": "",
-  "schedule": ""
-}]
-```]]>
+🔀 Multiple Conditions Handling
+
+If the input contains:
+
+Multiple IF / ELSE IF branches → output one rule per branch
+
+Location-based variation → output one rule per location
+
+Fully expand all valid decision paths that result in an action
+
+Ignore terminal ELSE / exclusion logic
+
+📥 Input Statement (Example)
+If subscriber's SMS revenue in the last 30 days is exactly 15 RO, favorite location is Mumbai, and total recharge in the last 30 days is at least 200 RO, then send promotional SMS with Message ID 24, otherwise if subscriber's SMS revenue in the last 30 days is greater than 15 RO, favorite location is Bengaluru, and total recharge in the last 30 days is at least 150 RO, then send promotional SMS with Message ID 25, otherwise exclude from campaign
+
+📤 Expected Output (Example)
+[
+  {
+    "rule": "For subscribers who are eligible based on having SMS revenue of exactly 15 RO in the last 30 days, a total recharge of at least 200 RO in the last 30 days, and a favorite location of Mumbai, send a promotional SMS with Message ID 24.",
+    "input_text": "If subscriber's SMS revenue in the last 30 days is exactly 15 RO, favorite location is Mumbai, and total recharge in the last 30 days is at least 200 RO, then send promotional SMS with Message ID 24, otherwise if subscriber's SMS revenue in the last 30 days is greater than 15 RO, favorite location is Bengaluru, and total recharge in the last 30 days is at least 150 RO, then send promotional SMS with Message ID 25, otherwise exclude from campaign"
+  },
+  {
+    "rule": "For subscribers who are eligible based on having SMS revenue greater than 15 RO in the last 30 days, a total recharge of at least 150 RO in the last 30 days, and a favorite location of Bengaluru, send a promotional SMS with Message ID 25.",
+    "input_text": "If subscriber's SMS revenue in the last 30 days is exactly 15 RO, favorite location is Mumbai, and total recharge in the last 30 days is at least 200 RO, then send promotional SMS with Message ID 24, otherwise if subscriber's SMS revenue in the last 30 days is greater than 15 RO, favorite location is Bengaluru, and total recharge in the last 30 days is at least 150 RO, then send promotional SMS with Message ID 25, otherwise exclude from campaign"
+  }
+]
+INPUT_TEXT: {{ $json.input_text }}
+
+
+]]>
+
     </prompt>
 
     <prompt key="action_extraction_prompt">
@@ -211,7 +191,7 @@ Return a JSON object:
         ]]>
     </prompt>
 
-    <prompt key="consistency_check_prompt" consistency_threshold="0.99" max_retries="1">
+    <prompt key="consistency_check_prompt" consistency_threshold="0.80" max_retries="1">
         <![CDATA[
 You are a Consistency Checker Agent.
 Evaluate how well the derived children text matches the original text logic.
