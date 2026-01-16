@@ -27,7 +27,7 @@ import static org.bsc.langgraph4j.StateGraph.START;
 
 public class DecompositionWorkflow {
     private static final Logger logger = LoggerFactory.getLogger(DecompositionWorkflow.class);
-    private static final String CONSISTENCY_PROMPT_KEY = "consistency_check_prompt";
+
     private static final String DECOMPOSITION_PROMPT_KEY = "statement_decompostion_agent_prompt";
 
     private final ValidationAgent validationAgent;
@@ -38,8 +38,6 @@ public class DecompositionWorkflow {
     private final ScheduleExtractionAgent scheduleExtractionAgent;
     private final AsciiRenderer asciiRenderer;
     private final ObjectMapper objectMapper;
-    private final double consistencyThreshold;
-    private final int maxRetries;
     private CompiledGraph<WorkflowState> compiledGraph;
 
     public DecompositionWorkflow(ChatLanguageModel lang4jService) {
@@ -53,15 +51,7 @@ public class DecompositionWorkflow {
         this.objectMapper = new ObjectMapper();
 
         // Read configuration from prompts.xml
-        PromptRegistry registry = PromptRegistry.getInstance();
-        String thresholdStr = registry.getAttribute(CONSISTENCY_PROMPT_KEY, "consistency_threshold");
-        String maxRetriesStr = registry.getAttribute(CONSISTENCY_PROMPT_KEY, "max_retries");
-
-        this.consistencyThreshold = thresholdStr != null ? Double.parseDouble(thresholdStr) : 0.8;
-        this.maxRetries = maxRetriesStr != null ? Integer.parseInt(maxRetriesStr) : 3;
-
-        logger.info("DecompositionWorkflow initialized with consistency_threshold={}, max_retries={}",
-                consistencyThreshold, maxRetries);
+        logger.info("DecompositionWorkflow initialized");
     }
 
     public CompiledGraph<WorkflowState> build() throws Exception {
@@ -116,12 +106,13 @@ public class DecompositionWorkflow {
 
                     Double score = state.getConsistencyScore();
                     int retryCount = state.getRetryCount();
+                    double threshold = getThreshold(DECOMPOSITION_PROMPT_KEY);
+                    int maxRetries = getMaxRetries(DECOMPOSITION_PROMPT_KEY);
 
-                    if (score != null && score >= consistencyThreshold) {
+                    if (score != null && score >= threshold) {
                         logger.info(
                                 "✓ Decomposition Consistency PASSED (score={}, threshold={}). Proceeding to Extraction.",
-                                score, consistencyThreshold);
-                        // MOVED TO NEXT STEP: Condition Extraction
+                                score, threshold);
                         return CompletableFuture.completedFuture("condition_extract_agent");
                     }
 
@@ -134,7 +125,7 @@ public class DecompositionWorkflow {
 
                     logger.info(
                             "✗ Decomposition Consistency FAILED (score={}, threshold={}). Retry {}/{}. Refining prompt...",
-                            score, consistencyThreshold, retryCount + 1, maxRetries);
+                            score, threshold, retryCount + 1, maxRetries);
                     return CompletableFuture.completedFuture("refine_decompose_prompt");
                 },
                 Map.of("refine_decompose_prompt", "refine_decompose_prompt",
@@ -165,26 +156,28 @@ public class DecompositionWorkflow {
 
                     Double score = state.getConditionConsistencyScore();
                     int retryCount = state.getConditionRetryCount();
+                    double threshold = getThreshold(CONDITION_EXTRACTION_PROMPT_KEY);
+                    int maxRetries = getMaxRetries(CONDITION_EXTRACTION_PROMPT_KEY);
+
                     if (score == null)
                         score = 0.0;
 
-                    if (score >= consistencyThreshold) {
+                    if (score >= threshold) {
                         logger.info(
                                 "✓ Condition Consistency PASSED (score={}, threshold={}). Proceeding to Schedule Extraction.",
-                                score, consistencyThreshold);
+                                score, threshold);
                         return CompletableFuture.completedFuture("schedule_extract_agent");
                     }
 
                     if (retryCount >= maxRetries) {
                         logger.warn("✗ Condition Max retries ({}) reached with score={}. Proceeding with best effort.",
                                 maxRetries, score);
-                        // Proceeding instead of ending, as we might have partial results
                         return CompletableFuture.completedFuture("schedule_extract_agent");
                     }
 
                     logger.info(
                             "✗ Condition Consistency FAILED (score={}, threshold={}). Retry {}/{}. Refining prompt...",
-                            score, consistencyThreshold, retryCount + 1, maxRetries);
+                            score, threshold, retryCount + 1, maxRetries);
                     return CompletableFuture.completedFuture("refine_condition_prompt");
                 },
                 Map.of("refine_condition_prompt", "refine_condition_prompt",
@@ -210,6 +203,7 @@ public class DecompositionWorkflow {
 
     private CompletableFuture<Map<String, Object>> decomposeNode(WorkflowState state) {
         int retryCount = state.getRetryCount();
+        int maxRetries = getMaxRetries(DECOMPOSITION_PROMPT_KEY);
         logger.info("═══ DECOMPOSITION AGENT (Attempt {}/{}) ═══", retryCount + 1, maxRetries + 1);
 
         String systemPrompt = state.getCurrentDecompositionPrompt();
@@ -275,7 +269,8 @@ public class DecompositionWorkflow {
 
                     logger.info("Decomposition Consistency score: {}", score);
 
-                    String feedback = generateFeedback(tree, score, "decomposition");
+                    String feedback = generateFeedback(tree, score, "decomposition",
+                            getThreshold(DECOMPOSITION_PROMPT_KEY));
 
                     return Map.of(
                             "consistencyScore", score,
@@ -286,6 +281,7 @@ public class DecompositionWorkflow {
 
     private CompletableFuture<Map<String, Object>> refineDecomposePromptNode(WorkflowState state) {
         int currentRetry = state.getRetryCount();
+        int maxRetries = getMaxRetries(DECOMPOSITION_PROMPT_KEY);
         logger.info("═══ PROMPT REFINEMENT (Decomposition - Retry {}/{}) ═══", currentRetry + 1, maxRetries);
 
         String originalPrompt = state.getCurrentDecompositionPrompt();
@@ -320,6 +316,7 @@ public class DecompositionWorkflow {
 
     private CompletableFuture<Map<String, Object>> conditionExtractionNode(WorkflowState state) {
         int retryCount = state.getConditionRetryCount();
+        int maxRetries = getMaxRetries(CONDITION_EXTRACTION_PROMPT_KEY);
         logger.info("═══ CONDITION EXTRACTION AGENT (Attempt {}/{}) ═══", retryCount + 1, maxRetries + 1);
         RuleTree<NodeData> tree = state.getTree();
 
@@ -365,7 +362,8 @@ public class DecompositionWorkflow {
                     }
 
                     logger.info("Condition Consistency score: {}", score);
-                    String feedback = generateFeedback(tree, score, "condition");
+                    String feedback = generateFeedback(tree, score, "condition",
+                            getThreshold(CONDITION_EXTRACTION_PROMPT_KEY));
 
                     return Map.of(
                             "conditionConsistencyScore", score,
@@ -376,6 +374,7 @@ public class DecompositionWorkflow {
 
     private CompletableFuture<Map<String, Object>> refineConditionPromptNode(WorkflowState state) {
         int currentRetry = state.getConditionRetryCount();
+        int maxRetries = getMaxRetries(CONDITION_EXTRACTION_PROMPT_KEY);
         logger.info("═══ PROMPT REFINEMENT (Condition - Retry {}/{}) ═══", currentRetry + 1, maxRetries);
 
         String originalPrompt = state.getCurrentConditionPromptString();
@@ -423,13 +422,13 @@ public class DecompositionWorkflow {
                 });
     }
 
-    private String generateFeedback(RuleTree<NodeData> tree, Double score, String stage) {
+    private String generateFeedback(RuleTree<NodeData> tree, Double score, String stage, double threshold) {
         StringBuilder feedback = new StringBuilder();
         feedback.append("Stage: ").append(stage.toUpperCase()).append("\n");
         feedback.append("Consistency Score: ").append(String.format("%.2f", score));
-        feedback.append(" (Threshold: ").append(consistencyThreshold).append(")\n\n");
+        feedback.append(" (Threshold: ").append(threshold).append(")\n\n");
 
-        if (score < consistencyThreshold) {
+        if (score < threshold) {
             feedback.append("The ").append(stage)
                     .append(" does not adequately preserve the original statement's meaning.\n\n");
             // Simplified feedback generation compared to original which pulled children
@@ -437,6 +436,16 @@ public class DecompositionWorkflow {
             feedback.append("Score is below threshold. Please improve consistency.");
         }
         return feedback.toString();
+    }
+
+    private double getThreshold(String key) {
+        String val = PromptRegistry.getInstance().getAttribute(key, "consistency_threshold");
+        return val != null ? Double.parseDouble(val) : 0.8;
+    }
+
+    private int getMaxRetries(String key) {
+        String val = PromptRegistry.getInstance().getAttribute(key, "max_retries");
+        return val != null ? Integer.parseInt(val) : 3;
     }
 
     public String print() {

@@ -24,7 +24,7 @@ Ensure "is_valid" is boolean. "issues_detected" is a list of strings explaining 
         ]]>
     </prompt>
 
-    <prompt key="statement_decompostion_agent_prompt">
+    <prompt key="statement_decompostion_agent_prompt" consistency_threshold="0.80" max_retries="1">
         <![CDATA[
 You are an assistant that splits complex telecom campaign instructions into independent, fully self-contained natural language rule statements.
 
@@ -70,7 +70,7 @@ If you have multiple conditions, join them in ONE string with ", otherwise " bet
         ]]>
     </prompt>
 
-    <prompt key="condition_extraction_prompt">
+    <prompt key="condition_extraction_prompt" consistency_threshold="0.99" max_retries="1">
         <![CDATA[You are an assistant that converts a telecom campaign rule written in natural language into fully merged, human-readable campaign rules in JSON format.
 
 Each output rule must represent only an actionable campaign outcome (i.e., something is sent or granted).
@@ -176,7 +176,7 @@ INPUT_TEXT: {{ $json.input_text }}
 
     </prompt>
 
-    <prompt key="action_extraction_prompt">
+    <prompt key="action_extraction_prompt" consistency_threshold="0.80" max_retries="1">
         <![CDATA[
 You are an Action Extractor Agent.
 Analyze the action text and extract structured details.
@@ -191,7 +191,7 @@ Return a JSON object:
         ]]>
     </prompt>
 
-    <prompt key="consistency_check_prompt" consistency_threshold="0.80" max_retries="1">
+    <prompt key="consistency_check_prompt">
         <![CDATA[
 You are a Consistency Checker Agent.
 Evaluate how well the derived children text matches the original text logic.
