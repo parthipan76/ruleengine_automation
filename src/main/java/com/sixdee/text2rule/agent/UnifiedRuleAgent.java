@@ -212,15 +212,15 @@ public class UnifiedRuleAgent {
             }
 
             // Modify structure:
-            // Parent -> Segment Node -> IF Node -> Action Node
+            // Parent -> Segments Node -> IF Node
+            // Parent -> Action Node (Unchanged)
 
             // Attach IF Node to Segment Node
             segmentNode.addChild(ifNode);
 
-            if (actionNode != null) {
-                parent.getChildren().remove(actionNode); // Remove from parent (sibling of segment)
-                segmentNode.addChild(actionNode); // Add to Segment Node (sibling of IF)
-            }
+            // Do NOT remove Segment Node. It stays.
+            // Action Node stays (Sibling of Segments)
+            // No changes needed for actionNode.
         }
     }
 
