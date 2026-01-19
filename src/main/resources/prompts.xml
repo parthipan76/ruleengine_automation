@@ -117,7 +117,7 @@ Location (city/region)
 Subscriber attributes
 
 Include exactly one final action
-(e.g., send SMS, trigger notification)
+(e.g., send SMS, triggering notification)
 
 Represent one executable IF / ELSE IF branch
 
@@ -205,12 +205,6 @@ Return a JSON object:
 Score should be between 0.0 and 1.0.
         ]]>
     </prompt>
-
-
-
-
-
-
 
     <prompt key="unified_rule_prompt" consistency_threshold="0.80" max_retries="1">
         <![CDATA[
@@ -423,6 +417,107 @@ Generate an improved version of the original prompt that:
 - Ensure all placeholders ({{ $json.* }}) are preserved exactly as they were
 
 Return ONLY the improved prompt text, without any explanations or JSON wrapping.
+        ]]>
+    </prompt>
+
+    <prompt key="unified_kpi_matching_prompt">
+        <![CDATA[
+You are a KPI matching engine.
+
+IMPORTANT SCOPE RULE:
+ONLY map KPIs for the text present in the Conditions list.
+DO NOT treat KPI descriptions, examples, or user descriptions as conditions.
+DO NOT create new conditions.
+DO NOT explain reasoning.
+
+INPUT:
+
+Conditions:
+[{{ $json.segments }}]
+
+Documents:
+[{{ $json.context }}]
+
+TASK:
+For EACH condition string in Conditions:
+1. Identify what metric it refers to (spending, recharge amount, activity, etc.).
+2. Select the closest matching KPI name from Documents.
+3. Use the KPI name EXACTLY as written.
+4. Add the KPI datatype in brackets.
+5. If multiple KPIs exist, choose the best single match.
+6. Do NOT duplicate KPI names.
+
+STRICT OUTPUT RULES:
+Output ONLY the final list.
+ONE list only.
+ONE entry per input condition.
+NO explanations.
+NO analysis.
+NO extra text.
+NO markdown.
+NO new conditions.
+
+OUTPUT FORMAT (MANDATORY):
+
+[
+  "KPI: <KPI_NAME> (<datatype>), Condition: <Condition>"
+]
+
+FAIL CONDITIONS:
+If a condition cannot be matched, still pick the closest KPI.
+Never output anything outside the list.
+        ]]>
+    </prompt>
+
+    <prompt key="unified_if_condition_prompt">
+        <![CDATA[
+You generate only the IF condition line for a telecom rule engine.
+
+INPUTS:
+CONDITION_JSON: {{ $json.conditions }}
+CONTEXT_STR: {{ $json.context }}
+ORIGINAL_STATEMENT: {{ $json.input_text }}
+
+TASK:
+1. Read CONDITION_JSON.
+2. Map each condition to the correct KPI using CONTEXT_STR.
+3. Use KPI datatypes from CONTEXT_STR.
+4. Combine all conditions into ONE logical expression.
+
+RULES:
+Wrap every condition in parentheses
+Use AND / OR correctly
+Allowed operators: =, !=, <, >, <=, >=
+For list values:
+  KPI IN LIST("A","B")
+For range values:
+  (KPI > X AND KPI <= Y)
+Do NOT miss any condition
+Do NOT add actions or braces
+
+OUTPUT:
+Return ONLY one line
+Format exactly like this:
+  if (<logical condition>)
+
+DO NOT:
+Do not output explanations
+Do not use markdown
+Do not add then or {}
+Do not output anything if no valid conditions exist
+
+EXAMPLE:
+1)if (ACCOUNT_TYPE = "prepaid" AND REGION IN LIST("NY","CA") AND RECHARGE_AMOUNT > 10)
+
+2)if ((TOTAL_SPEND_180D >= 50 AND TOTAL_SPEND_180D <= 100) AND (LAST_ACTIVE_DAYS <= 10))
+
+3) if ((ACCOUNT_TYPE = "prepaid") AND (Total_Sms_Rev_30D > 12) AND (MOST_FREQUENT_LOCATION = "Bengaluru") AND (Recharge_Amount_30D >= 300))
+
+4) if ((LOCAL_DATA_GB_60D = {range_end}) AND (LAST_ACTIVITY_DAYS <= 30))
+
+5) if ((DATA_USAGE_60D <= {max}) AND (ROAMING_VOICE_MOU_60D < {limit}))
+
+6) if ((DATA_USAGE_60D <= 50) AND (ROAMING_VOICE_MOU_60D < 20) AND (LOCAL_DATA_GB_60D = 10))
         ]]>
     </prompt>
 

@@ -6,12 +6,15 @@ import java.io.Serializable;
 
 /**
  * Represents a node in the multi-node tree.
+ * 
  * @param <T> existing data type
  */
 public class RuleNode<T> implements Serializable {
     private static final long serialVersionUID = 1L;
     private T data;
     private List<RuleNode<T>> children;
+
+    private RuleNode<T> parent;
 
     public RuleNode(T data) {
         this.data = data;
@@ -31,7 +34,16 @@ public class RuleNode<T> implements Serializable {
     }
 
     public void addChild(RuleNode<T> child) {
+        child.setParent(this);
         this.children.add(child);
+    }
+
+    public RuleNode<T> getParent() {
+        return parent;
+    }
+
+    public void setParent(RuleNode<T> parent) {
+        this.parent = parent;
     }
 
     @Override

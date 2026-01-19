@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.sixdee.text2rule.agent.RuleConverterAgent;
+import com.sixdee.text2rule.agent.UnifiedRuleAgent;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -41,8 +42,8 @@ public class DecompositionWorkflow {
     private final ConditionExtractionAgent conditionExtractionAgent;
     private final ScheduleExtractionAgent scheduleExtractionAgent;
     private final RuleConverterAgent ruleConverterAgent;
+    private final UnifiedRuleAgent unifiedRuleAgent;
 
-    // private final UnifiedRuleAgent unifiedRuleAgent;
     private final AsciiRenderer asciiRenderer;
     private final ObjectMapper objectMapper;
     private CompiledGraph<WorkflowState> compiledGraph;
@@ -55,8 +56,8 @@ public class DecompositionWorkflow {
         this.conditionExtractionAgent = new ConditionExtractionAgent(lang4jService);
         this.scheduleExtractionAgent = new ScheduleExtractionAgent(lang4jService);
         this.ruleConverterAgent = new RuleConverterAgent(lang4jService);
+        this.unifiedRuleAgent = new UnifiedRuleAgent(lang4jService);
 
-        // this.unifiedRuleAgent = new UnifiedRuleAgent(lang4jService);
         this.asciiRenderer = new AsciiRenderer();
         this.objectMapper = new ObjectMapper();
 
@@ -83,8 +84,8 @@ public class DecompositionWorkflow {
 
         // Unified Rule Node
         workflow.addNode("rule_converter_agent", this::ruleConverterNode);
+        workflow.addNode("unified_rule_agent", this::unifiedRuleNode);
         // workflow.addNode("kpi_if_agent", this::kpiIfNode);
-        // workflow.addNode("unified_rule_agent", this::unifiedRuleNode);
 
         // Start with validation
         workflow.addEdge(START, "validate_agent");
@@ -202,7 +203,8 @@ public class DecompositionWorkflow {
 
         workflow.addEdge("refine_condition_prompt", "condition_extract_agent");
 
-        workflow.addEdge("rule_converter_agent", END);
+        workflow.addEdge("rule_converter_agent", "unified_rule_agent");
+        workflow.addEdge("unified_rule_agent", END);
 
         this.compiledGraph = workflow.compile();
         return this.compiledGraph;
@@ -469,6 +471,26 @@ public class DecompositionWorkflow {
     private int getMaxRetries(String key) {
         String val = PromptRegistry.getInstance().getAttribute(key, "max_retries");
         return val != null ? Integer.parseInt(val) : 3;
+    }
+
+    private CompletableFuture<Map<String, Object>> unifiedRuleNode(WorkflowState state) {
+        logger.info("═══ UNIFIED RULE AGENT ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        if (tree == null) {
+            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
+        }
+
+        return unifiedRuleAgent.execute(tree)
+                .thenApply(agentState -> {
+                    if (agentState.isFailed()) {
+                        logger.warn("Unified Rule Logic failed.");
+                    } else {
+                        logger.info("Unified Rule Logic completed.");
+                        asciiRenderer.render(agentState.getTree());
+                    }
+                    return Map.of("tree", agentState.getTree() != null ? agentState.getTree() : tree);
+                });
     }
 
     public String print() {
