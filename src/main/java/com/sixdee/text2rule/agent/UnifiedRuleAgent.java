@@ -114,7 +114,7 @@ public class UnifiedRuleAgent {
         logger.info("Processing segments: {}", segmentsRaw);
 
         // Fetch context
-        String context = supabaseService.fetchDocument("document5");
+        String context = supabaseService.fetchDocument();
 
         // Step 1: KPI Matching
         List<String> matchedKpis = executeKpiMatching(segmentsRaw, context);

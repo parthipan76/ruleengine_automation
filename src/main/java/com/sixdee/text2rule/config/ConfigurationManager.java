@@ -98,11 +98,55 @@ public class ConfigurationManager {
             loadApiConfig(doc);
 
             // Load rendering configuration from <rendering> section
+            // Load rendering configuration from <rendering> section
             loadRenderingConfig(doc);
+
+            // Load Supabase configuration from <supabase> section
+            loadSupabaseConfig(doc);
 
         } catch (Exception e) {
             logger.error("Failed to parse config.xml [error={}]", e.getMessage(), e);
             setDefaults();
+        }
+    }
+
+    /**
+     * Load Supabase configuration from XML document.
+     */
+    private void loadSupabaseConfig(org.w3c.dom.Document doc) {
+        try {
+            org.w3c.dom.NodeList supabaseNodes = doc.getElementsByTagName("supabase");
+            if (supabaseNodes.getLength() > 0) {
+                org.w3c.dom.Element supabaseElement = (org.w3c.dom.Element) supabaseNodes.item(0);
+
+                // Project Details
+                org.w3c.dom.NodeList projectNodes = supabaseElement.getElementsByTagName("project");
+                if (projectNodes.getLength() > 0) {
+                    org.w3c.dom.Element projectElement = (org.w3c.dom.Element) projectNodes.item(0);
+                    configCache.put("supabase.project.name", getElementText(projectElement, "name", ""));
+                    configCache.put("supabase.project.url", getElementText(projectElement, "url", ""));
+                    configCache.put("supabase.anon.key", getElementText(projectElement, "anonKey", ""));
+                    configCache.put("supabase.document", getElementText(projectElement, "document", ""));
+                }
+
+                // Auth Details
+                org.w3c.dom.NodeList authNodes = supabaseElement.getElementsByTagName("auth");
+                if (authNodes.getLength() > 0) {
+                    org.w3c.dom.Element authElement = (org.w3c.dom.Element) authNodes.item(0);
+                    configCache.put("supabase.email", getElementText(authElement, "email", ""));
+                    configCache.put("supabase.password", getElementText(authElement, "password", ""));
+                }
+
+                // Connection settings
+                configCache.put("supabase.timeout.seconds", Integer.parseInt(
+                        getElementText(supabaseElement, "timeout", "10")));
+                configCache.put("supabase.max.retries", Integer.parseInt(
+                        getElementText(supabaseElement, "maxRetries", "3")));
+
+                logger.debug("Loaded Supabase configuration [url={}]", configCache.get("supabase.project.url"));
+            }
+        } catch (Exception e) {
+            logger.warn("Error loading Supabase config, using defaults [error={}]", e.getMessage());
         }
     }
 
@@ -186,10 +230,29 @@ public class ConfigurationManager {
                         configCache.put("renderer.json.enabled", enabled);
                     }
 
-                    logger.debug("Loaded rendering configuration [ascii={}, mermaid={}, json={}]",
+                    // Load Consistency renderer setting
+                    org.w3c.dom.NodeList consistencyNodes = renderersElement.getElementsByTagName("consistency");
+                    if (consistencyNodes.getLength() > 0) {
+                        org.w3c.dom.Element consistencyElement = (org.w3c.dom.Element) consistencyNodes.item(0);
+                        boolean enabled = Boolean.parseBoolean(consistencyElement.getAttribute("enabled"));
+                        configCache.put("renderer.consistency.enabled", enabled);
+                    }
+
+                    // Load Graph renderer setting
+                    org.w3c.dom.NodeList graphNodes = renderersElement.getElementsByTagName("graph");
+                    if (graphNodes.getLength() > 0) {
+                        org.w3c.dom.Element graphElement = (org.w3c.dom.Element) graphNodes.item(0);
+                        boolean enabled = Boolean.parseBoolean(graphElement.getAttribute("enabled"));
+                        configCache.put("renderer.graph.enabled", enabled);
+                    }
+
+                    logger.debug(
+                            "Loaded rendering configuration [ascii={}, mermaid={}, json={}, consistency={}, graph={}]",
                             configCache.get("renderer.ascii.enabled"),
                             configCache.get("renderer.mermaid.enabled"),
-                            configCache.get("renderer.json.enabled"));
+                            configCache.get("renderer.json.enabled"),
+                            configCache.get("renderer.consistency.enabled"),
+                            configCache.get("renderer.graph.enabled"));
                 }
             } else {
                 // Set defaults if rendering section not found
@@ -357,6 +420,14 @@ public class ConfigurationManager {
 
     // ===== Supabase Configuration =====
 
+    public String getSupabaseProjectName() {
+        return (String) configCache.getOrDefault("supabase.project.name", "");
+    }
+
+    public String getSupabaseDocument() {
+        return (String) configCache.getOrDefault("supabase.document", "");
+    }
+
     public String getSupabaseProjectUrl() {
         return (String) configCache.getOrDefault("supabase.project.url", "");
     }
@@ -406,6 +477,20 @@ public class ConfigurationManager {
      */
     public boolean isJsonRendererEnabled() {
         return (Boolean) configCache.getOrDefault("renderer.json.enabled", true);
+    }
+
+    /**
+     * Check if Consistency renderer is enabled.
+     */
+    public boolean isConsistencyRendererEnabled() {
+        return (Boolean) configCache.getOrDefault("renderer.consistency.enabled", true);
+    }
+
+    /**
+     * Check if Workflow Graph renderer is enabled.
+     */
+    public boolean isWorkflowGraphRendererEnabled() {
+        return (Boolean) configCache.getOrDefault("renderer.graph.enabled", true);
     }
 
     // ===== Utility Methods =====

@@ -9,13 +9,29 @@ public class AsciiRenderer implements TreeRenderer {
     private static final Logger logger = LoggerFactory.getLogger(AsciiRenderer.class);
 
     @Override
+    public void render(RuleTree<?> tree, com.sixdee.text2rule.workflow.WorkflowState state) {
+        if (state != null) {
+            Double score = state.getConsistencyScore();
+            // String feedback = state.getFeedback(); // Unused
+            StringBuilder info = new StringBuilder();
+            info.append("\n--- Consistency Info ---\n");
+            info.append("Score: ").append(score != null ? score : "N/A").append("\n");
+            // info.append("Feedback: ").append(feedback != null ? feedback :
+            // "N/A").append("\n"); // Optional: Feedback might be long
+            info.append("------------------------");
+            logger.debug(info.toString());
+        }
+        render(tree);
+    }
+
+    @Override
     public void render(RuleTree<?> tree) {
         // Initialize all variables before try block
         StringBuilder buffer = null;
 
         try {
-            if (tree.getRoot() == null) {
-                logger.warn("Cannot render ASCII tree: tree root is null");
+            if (tree == null || tree.getRoot() == null) {
+                logger.warn("Cannot render ASCII tree: tree or root is null");
                 return;
             }
 

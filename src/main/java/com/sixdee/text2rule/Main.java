@@ -45,7 +45,7 @@ public class Main {
 
             // Prepare input
             Map<String, Object> inputs = Map.of("input",
-                    "Run this campaign weekly on Mondays and Tuesdays from 5 October 2024 to 5 October 2026, targeting subscribers based on their SMS revenue, preferred location, and recharge behavior. Subscribers whose SMS revenue in the last 30 days is exactly 15 RO, whose favorite location is Mumbai, and whose total recharge in the last 30 days is at least 200 RO should receive a promotional SMS with Message ID 24, while subscribers whose SMS revenue in the last 30 days is greater than 15 RO, whose favorite location is Bengaluru, and whose total recharge in the last 30 days is at least 150 RO should receive a promotional SMS with Message ID 25. Subscribers who do not meet either of these criteria should be excluded from the campaign.");
+                    "Run this campaign weekly on Mondays and Tuesdays from 5 October 2024 to 5 October 2026, targeting subscribers based on their SMS revenue, preferred location, and recharge behavior. Subscribers whose SMS revenue in the last 30 days is exactly 15 RO, whose favorite location is Adimali, and whose total recharge in the last 30 days is at least 200 RO should receive a promotional SMS with Message ID 24, while subscribers whose SMS revenue in the last 30 days is greater than 15 RO, whose favorite location is Bengaluru, and whose total recharge in the last 30 days is at least 150 RO should receive a promotional SMS with Message ID 25. Subscribers who do not meet either of these criteria should be excluded from the campaign.");
 
             logger.info("Invoking Decomposition Workflow [input_length={}]",
                     ((String) inputs.get("input")).length());

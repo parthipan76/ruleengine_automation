@@ -36,14 +36,8 @@ public class ResultPresenter {
         try {
             logger.info("Presenting execution results...");
 
-            // 1. Display workflow graph
-            displayWorkflowGraph(graphBuilder);
-
-            // 2. Display consistency check results
-            displayConsistencyResults(state);
-
-            // 3. Render tree using factory-created renderers
-            renderTreeNodes(state);
+            // Render all results using factory-created renderers (Chain of Responsibility)
+            renderTreeNodes(state, graphBuilder);
 
             logger.info("Results presented successfully");
         } catch (Exception e) {
@@ -54,57 +48,23 @@ public class ResultPresenter {
     /**
      * Display workflow graph using Mermaid.
      */
-    private void displayWorkflowGraph(DecompositionWorkflow graphBuilder) {
-        String graphOutput = null;
-        try {
-            graphOutput = graphBuilder.print();
-            System.out.println(graphOutput);
-            logger.info("Workflow graph displayed successfully");
-        } catch (Exception e) {
-            logger.error("Failed to display workflow graph [error={}]", e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Display consistency check results.
-     */
-    private void displayConsistencyResults(WorkflowState state) {
-        Double consistencyScore = null;
-        String consistencyFeedback = null;
-        try {
-            consistencyScore = state.getConsistencyScore();
-            consistencyFeedback = state.getFeedback();
-
-            if (consistencyScore != null) {
-                System.out.println("\n" + "=".repeat(50));
-                System.out.println("CONSISTENCY CHECK RESULTS");
-                System.out.println("=".repeat(50));
-                System.out.println("Score: " + consistencyScore);
-                System.out.println("Feedback: " + (consistencyFeedback != null ? consistencyFeedback : "N/A"));
-                System.out.println("=".repeat(50) + "\n");
-                logger.info("Consistency results displayed [score={}]", consistencyScore);
-            } else {
-                logger.info("No consistency score available to display");
-            }
-        } catch (Exception e) {
-            logger.error("Error logging consistency results [error={}]", e.getMessage(), e);
-        }
-    }
+    // Obsolete display methods removed in favor of Renderer implementations
 
     /**
      * Render the rule tree using configured renderers.
      */
-    private void renderTreeNodes(WorkflowState state) {
+    private void renderTreeNodes(WorkflowState state, DecompositionWorkflow workflow) {
         RuleTree<NodeData> tree = null;
         RendererFactory rendererFactory = null;
         List<TreeRenderer> renderers = null;
 
         try {
             tree = state.getTree();
-            if (tree == null) {
-                logger.warn("No tree available to render");
-                return;
-            }
+            // Ensure tree is not null for renderers that depend on it
+            // However, WorkflowGraphRenderer might strictly depend on workflow, not tree.
+            // But strict TreeRenderer interface requires tree.
+            // We proceed even if tree is null, passing it as null? No, State.getTree()
+            // might be null.
 
             // use Factory to create renderers (Separation of Concern)
             rendererFactory = new RendererFactory(config);
@@ -118,7 +78,7 @@ public class ResultPresenter {
             // Execute rendering
             for (TreeRenderer renderer : renderers) {
                 try {
-                    renderer.render(tree);
+                    renderer.render(tree, state, workflow);
                 } catch (Exception e) {
                     logger.error("Renderer failed [renderer={}, error={}]",
                             renderer.getClass().getSimpleName(), e.getMessage(), e);

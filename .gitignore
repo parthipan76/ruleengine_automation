@@ -4,3 +4,4 @@ target/
 .DS_Store
 *.class
 *.log
+src/main/resources/config.xml

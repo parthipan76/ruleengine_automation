@@ -14,8 +14,8 @@ public class MermaidRenderer implements TreeRenderer {
         StringBuilder sb = null;
 
         try {
-            if (tree.getRoot() == null) {
-                logger.warn("Cannot render Mermaid graph: tree root is null");
+            if (tree == null || tree.getRoot() == null) {
+                logger.warn("Cannot render Mermaid graph: tree or root is null");
                 return;
             }
 

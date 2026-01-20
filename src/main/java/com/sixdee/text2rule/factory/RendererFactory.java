@@ -4,9 +4,11 @@ import com.sixdee.text2rule.config.ConfigurationManager;
 import com.sixdee.text2rule.model.NodeData;
 import com.sixdee.text2rule.model.RuleTree;
 import com.sixdee.text2rule.view.AsciiRenderer;
+import com.sixdee.text2rule.view.ConsistencyRenderer;
 import com.sixdee.text2rule.view.FinalRuleJsonRenderer;
 import com.sixdee.text2rule.view.MermaidRenderer;
 import com.sixdee.text2rule.view.TreeRenderer;
+import com.sixdee.text2rule.view.WorkflowGraphRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,6 +64,18 @@ public class RendererFactory {
                 logger.debug("JSON renderer enabled");
             }
 
+            // Add Consistency renderer if enabled
+            if (config.isConsistencyRendererEnabled()) {
+                renderers.add(new ConsistencyRenderer());
+                logger.debug("Consistency renderer enabled");
+            }
+
+            // Add Workflow Graph renderer if enabled
+            if (config.isWorkflowGraphRendererEnabled()) {
+                renderers.add(new WorkflowGraphRenderer());
+                logger.debug("Workflow Graph renderer enabled");
+            }
+
             if (renderers.isEmpty()) {
                 logger.warn("No renderers enabled in configuration");
             } else {
@@ -87,6 +101,10 @@ public class RendererFactory {
             @Override
             @SuppressWarnings("unchecked")
             public void render(RuleTree<?> tree) {
+                if (tree == null) {
+                    logger.warn("Cannot render JSON: tree is null");
+                    return;
+                }
                 String jsonOutput = null;
 
                 try {
