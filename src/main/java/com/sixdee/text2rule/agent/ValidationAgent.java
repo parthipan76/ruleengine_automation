@@ -4,7 +4,7 @@ import com.sixdee.text2rule.config.PromptRegistry;
 import com.sixdee.text2rule.dto.ValidationResult;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.agent.tool.ToolSpecification;
+
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -39,6 +39,10 @@ public class ValidationAgent {
 
         public String getInput() {
             return (String) this.data().get("input");
+        }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
         }
 
         public ValidationResult getValidationResult() {
@@ -83,9 +87,11 @@ public class ValidationAgent {
         String content = null;
         String json = null;
         String isValid = null;
+        String traceId = state.getTraceId();
+        String validationPromptForLog = null;
 
         try {
-            logger.info("ValidationAgent: Executing Validate Node...");
+            logger.info("ValidationAgent: Starting validation...");
             input = state.getInput();
             messages = new ArrayList<>();
 
@@ -97,8 +103,10 @@ public class ValidationAgent {
             // Append instructions to ensure strict JSON output
             detailedInstructions = "\nValidate the rule and return a valid JSON object matching the format. Output ONLY the JSON.";
 
+            validationPromptForLog = promptTemplate.replace("{{ $json.ruletext }}", input) + detailedInstructions;
+
             messages.add(
-                    new SystemMessage(promptTemplate.replace("{{ $json.ruletext }}", input) + detailedInstructions));
+                    new SystemMessage(validationPromptForLog));
 
             // Rate limit protection: 12-second delay
             try {
@@ -106,24 +114,24 @@ public class ValidationAgent {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            // Generate without tools
+            logger.info("ValidationAgent: Sending prompt to LLM...");
             response = lang4jService.generate(messages);
+            logger.info("ValidationAgent: Received response from LLM.");
             aiMessage = response.content();
 
             result = null;
             content = aiMessage.text();
 
             try {
-                // cleaner JSON extraction
-                int start = content.indexOf("{");
-                int end = content.lastIndexOf("}");
-                if (start >= 0 && end > start) {
-                    json = content.substring(start, end + 1);
-                    result = objectMapper.readValue(json, ValidationResult.class);
+                // Use JsonExtractorTool for robust JSON extraction
+                result = com.sixdee.text2rule.tool.JsonExtractorTool.extractAndParse(content, ValidationResult.class);
+
+                if (result != null) {
+                    json = objectMapper.writeValueAsString(result); // Re-serialize for logging/observability if needed
                     logger.info("ValidationAgent: Parsed result - isValid: {}, issuesDetected: {}",
                             result.isValid(), result.getIssuesDetected());
                 } else {
-                    logger.warn("No JSON found in response: {}", content);
+                    logger.warn("No JSON found or parsing failed in response: {}", content);
                 }
             } catch (Exception e) {
                 logger.error("Failed to parse validation result", e);
@@ -140,8 +148,43 @@ public class ValidationAgent {
             }
 
             isValid = String.valueOf(result.isValid());
+
             return CompletableFuture.completedFuture(Map.of("validationResult", result, "valid", isValid));
+        } catch (Exception e) {
+            logger.error("Validation failed with exception", e);
+            // Create a dummy result for the state if needed, or rethrow
+            // But for observability, we handle it in finally
+            throw e;
         } finally {
+            // Observability: Capture Event in Finally
+            java.util.List<java.util.Map<String, String>> messageListForEvent = new java.util.ArrayList<>();
+            java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+            userMessage.put("role", "user");
+            userMessage.put("content", validationPromptForLog != null ? validationPromptForLog : state.getInput());
+            // validationPrompt
+            messageListForEvent.add(userMessage);
+
+            // Add AI message if available
+            if (aiMessage != null) {
+                java.util.Map<String, String> aiMessageMap = new java.util.HashMap<>();
+                aiMessageMap.put("role", "assistant");
+                aiMessageMap.put("content", aiMessage.text());
+                messageListForEvent.add(aiMessageMap);
+            }
+
+            String validationJson = (json != null) ? json : (content != null ? content : "No JSON/Content");
+            String status = (result != null && result.isValid()) ? "Validation Passed" : "Validation Failed";
+
+            com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                    traceId,
+                    "ValidationAgent",
+                    messageListForEvent, // Use the new message list
+                    validationJson, // Use the extracted JSON or content
+                    status, // Use the derived status
+                    "agent-model",
+                    java.util.Collections.emptyMap(),
+                    java.util.Collections.emptyMap());
+
             // Cleanup resources
             input = null;
             messages = null;
@@ -151,15 +194,14 @@ public class ValidationAgent {
             aiMessage = null;
             content = null;
             json = null;
-            isValid = null;
-            // Note: result is returned, so not nullified here
         }
     }
 
-    public CompletableFuture<ValidationState> execute(String input) {
+    public CompletableFuture<ValidationState> execute(String input, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return compiledGraph.invoke(Map.of("input", input)).orElse(null);
+                return compiledGraph.invoke(Map.of("input", input, "traceId",
+                        traceId != null ? traceId : java.util.UUID.randomUUID().toString())).orElse(null);
             } catch (Exception e) {
                 logger.error("Error executing validation agent", e);
                 throw new RuntimeException(e);
