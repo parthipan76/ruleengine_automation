@@ -2,13 +2,16 @@ package com.sixdee.text2rule.view;
 
 import com.sixdee.text2rule.builder.RuleJsonBuilder;
 import com.sixdee.text2rule.model.NodeData;
+import com.sixdee.text2rule.model.RuleNode;
 import com.sixdee.text2rule.model.RuleTree;
 import com.sixdee.text2rule.parser.ActionParser;
 import com.sixdee.text2rule.parser.ConditionParser;
 import com.sixdee.text2rule.parser.ScheduleParser;
+import com.sixdee.text2rule.util.TreeTraverser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -21,10 +24,11 @@ import java.util.Map;
 public class FinalRuleJsonRenderer {
     private static final Logger logger = LoggerFactory.getLogger(FinalRuleJsonRenderer.class);
 
-    private final ConditionParser conditionParser;
-    private final ActionParser actionParser;
-    private final ScheduleParser scheduleParser;
-    private final RuleJsonBuilder jsonBuilder;
+    private ConditionParser conditionParser;
+    private ActionParser actionParser;
+    private ScheduleParser scheduleParser;
+    private RuleJsonBuilder jsonBuilder;
+    private TreeTraverser treeTraverser;
 
     /**
      * Constructor with dependency injection of parsers and builder.
@@ -35,7 +39,9 @@ public class FinalRuleJsonRenderer {
             this.actionParser = new ActionParser();
             this.scheduleParser = new ScheduleParser();
             this.jsonBuilder = new RuleJsonBuilder();
-            logger.info("FinalRuleJsonRenderer initialized [parsers=3, builder=RuleJsonBuilder]");
+            this.treeTraverser = new TreeTraverser();
+            logger.info(
+                    "FinalRuleJsonRenderer initialized [parsers=3, builder=RuleJsonBuilder, traverser=TreeTraverser]");
         } catch (Exception e) {
             logger.error("Failed to initialize FinalRuleJsonRenderer [error={}]", e.getMessage(), e);
             throw new RuntimeException("Renderer initialization failed", e);
@@ -88,6 +94,61 @@ public class FinalRuleJsonRenderer {
             actions = null;
             schedule = null;
             // Note: result is returned, so not nullified here
+        }
+    }
+
+    /**
+     * Render the tree using leftmost-leaf-first traversal with condition-action
+     * pairing.
+     * This method:
+     * 1. Finds the leftmost leaf node
+     * 2. If it's a condition, creates a condition group
+     * 3. Searches upward for matching action
+     * 4. Pairs them in the output
+     * 
+     * @param tree The RuleTree to render
+     * @return JSON string representation with paired condition-action structure
+     */
+    public String renderWithPairing(RuleTree<NodeData> tree) {
+        List<Map<String, Object>> conditions = null;
+        List<Map<String, Object>> actions = null;
+        Map<String, Object> schedule = null;
+        String result = null;
+
+        try {
+            if (tree == null || tree.getRoot() == null) {
+                logger.warn("renderWithPairing called with null tree or root");
+                return "[]";
+            }
+
+            logger.info("Starting intelligent paired rule JSON rendering [tree_has_root=true]");
+
+            // Use ConditionActionGrouper to intelligently group conditions by their actions
+            com.sixdee.text2rule.util.ConditionActionGrouper grouper = new com.sixdee.text2rule.util.ConditionActionGrouper();
+            List<com.sixdee.text2rule.util.ConditionActionGrouper.ConditionGroup> groups = grouper
+                    .groupConditionsByAction(tree.getRoot());
+
+            logger.info("Grouped conditions [num_groups={}]", groups.size());
+
+            // Extract schedule from root
+            schedule = scheduleParser.extractSchedule(tree.getRoot());
+
+            // Build JSON directly from groups (preserves grouping)
+            result = jsonBuilder
+                    .withSchedule(schedule)
+                    .buildFromGroups(groups, conditionParser, actionParser);
+
+            logger.info("Intelligent paired rendering completed [groups={}]", groups.size());
+
+            return result;
+        } catch (Exception e) {
+            logger.error("Failed to render paired rule JSON [error={}]", e.getMessage(), e);
+            return "[]";
+        } finally {
+            // Cleanup resources
+            conditions = null;
+            actions = null;
+            schedule = null;
         }
     }
 }

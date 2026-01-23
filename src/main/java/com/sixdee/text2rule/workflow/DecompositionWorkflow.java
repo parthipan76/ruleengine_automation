@@ -35,6 +35,10 @@ public class DecompositionWorkflow {
     private static final Logger logger = LoggerFactory.getLogger(DecompositionWorkflow.class);
 
     private static final String DECOMPOSITION_PROMPT_KEY = "statement_decompostion_agent_prompt";
+    private static final String SCHEDULE_EXTRACTION_PROMPT_KEY = "schedule_parser_prompt";
+    private static final String ACTION_EXTRACTION_PROMPT_KEY = "action_extraction_prompt";
+    private static final String RULE_CONVERTER_PROMPT_KEY = "rule_converter_prompt";
+    private static final String UNIFIED_RULE_PROMPT_KEY = "unified_rule_prompt";
 
     private final ValidationAgent validationAgent;
     private final DecompositionAgent decompositionAgent;
@@ -84,12 +88,21 @@ public class DecompositionWorkflow {
         workflow.addNode("consistency_check_condition", this::consistencyCheckConditionNode);
         workflow.addNode("refine_condition_prompt", this::refineConditionPromptNode);
         workflow.addNode("schedule_extract_agent", this::scheduleExtractionNode);
+        workflow.addNode("consistency_check_schedule", this::consistencyCheckScheduleNode);
+        workflow.addNode("refine_schedule_prompt", this::refineSchedulePromptNode);
 
-        // Unified Rule Node
+        // Unified Rule Node & Consistency
         workflow.addNode("rule_converter_agent", this::ruleConverterNode);
+        workflow.addNode("consistency_check_converter", this::consistencyCheckConverterNode);
+        workflow.addNode("refine_converter_prompt", this::refineConverterPromptNode);
+
         workflow.addNode("unified_rule_agent", this::unifiedRuleNode);
+        workflow.addNode("consistency_check_unified", this::consistencyCheckUnifiedNode);
+        workflow.addNode("refine_unified_prompt", this::refineUnifiedPromptNode);
+
         workflow.addNode("action_extract_agent", this::actionExtractionNode);
-        // workflow.addNode("kpi_if_agent", this::kpiIfNode);
+        workflow.addNode("consistency_check_action", this::consistencyCheckActionNode);
+        workflow.addNode("refine_action_prompt", this::refineActionPromptNode);
 
         // Start with validation
         workflow.addEdge(START, "validate_agent");
@@ -155,7 +168,30 @@ public class DecompositionWorkflow {
         workflow.addEdge("refine_decompose_prompt", "decompose_agent");
 
         // Schedule -> Condition
-        workflow.addEdge("schedule_extract_agent", "condition_extract_agent");
+        // Schedule Logic (Agent -> Consistency -> Refine loop or Next)
+        workflow.addConditionalEdges(
+                "schedule_extract_agent",
+                state -> state.isWorkflowFailed() ? CompletableFuture.completedFuture(END)
+                        : CompletableFuture.completedFuture("audit"),
+                Map.of("audit", "consistency_check_schedule", END, END));
+
+        workflow.addConditionalEdges(
+                "consistency_check_schedule",
+                state -> {
+                    if (state.isWorkflowFailed())
+                        return CompletableFuture.completedFuture(END);
+                    Double score = state.getScheduleConsistencyScore();
+                    int retry = state.getScheduleRetryCount();
+                    if (score != null && score >= getThreshold(SCHEDULE_EXTRACTION_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Success");
+                    if (retry >= getMaxRetries(SCHEDULE_EXTRACTION_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Failure");
+                    return CompletableFuture.completedFuture("Retry");
+                },
+                Map.of("Retry", "refine_schedule_prompt", "Success", "condition_extract_agent", "Failure",
+                        "condition_extract_agent"));
+
+        workflow.addEdge("refine_schedule_prompt", "schedule_extract_agent");
 
         // Extraction flow: Condition -> Consistency
         workflow.addConditionalEdges(
@@ -207,9 +243,79 @@ public class DecompositionWorkflow {
 
         workflow.addEdge("refine_condition_prompt", "condition_extract_agent");
 
-        workflow.addEdge("rule_converter_agent", "unified_rule_agent");
-        workflow.addEdge("unified_rule_agent", "action_extract_agent");
-        workflow.addEdge("action_extract_agent", END);
+        // Rule Converter Logic
+        workflow.addConditionalEdges(
+                "rule_converter_agent",
+                state -> state.isWorkflowFailed() ? CompletableFuture.completedFuture(END)
+                        : CompletableFuture.completedFuture("audit"),
+                Map.of("audit", "consistency_check_converter", END, END));
+
+        workflow.addConditionalEdges(
+                "consistency_check_converter",
+                state -> {
+                    if (state.isWorkflowFailed())
+                        return CompletableFuture.completedFuture(END);
+                    Double score = state.getRuleConverterConsistencyScore();
+                    int retry = state.getRuleConverterRetryCount();
+                    if (score != null && score >= getThreshold(RULE_CONVERTER_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Success");
+                    if (retry >= getMaxRetries(RULE_CONVERTER_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Failure");
+                    return CompletableFuture.completedFuture("Retry");
+                },
+                Map.of("Retry", "refine_converter_prompt", "Success", "unified_rule_agent", "Failure",
+                        "unified_rule_agent"));
+
+        workflow.addEdge("refine_converter_prompt", "rule_converter_agent");
+
+        // Unified Rule Logic
+        workflow.addConditionalEdges(
+                "unified_rule_agent",
+                state -> state.isWorkflowFailed() ? CompletableFuture.completedFuture(END)
+                        : CompletableFuture.completedFuture("audit"),
+                Map.of("audit", "consistency_check_unified", END, END));
+
+        workflow.addConditionalEdges(
+                "consistency_check_unified",
+                state -> {
+                    if (state.isWorkflowFailed())
+                        return CompletableFuture.completedFuture(END);
+                    Double score = state.getUnifiedRuleConsistencyScore();
+                    int retry = state.getUnifiedRuleRetryCount();
+                    if (score != null && score >= getThreshold(UNIFIED_RULE_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Success");
+                    if (retry >= getMaxRetries(UNIFIED_RULE_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Failure");
+                    return CompletableFuture.completedFuture("Retry");
+                },
+                Map.of("Retry", "refine_unified_prompt", "Success", "action_extract_agent", "Failure",
+                        "action_extract_agent"));
+
+        workflow.addEdge("refine_unified_prompt", "unified_rule_agent");
+
+        // Action Logic
+        workflow.addConditionalEdges(
+                "action_extract_agent",
+                state -> state.isWorkflowFailed() ? CompletableFuture.completedFuture(END)
+                        : CompletableFuture.completedFuture("audit"),
+                Map.of("audit", "consistency_check_action", END, END));
+
+        workflow.addConditionalEdges(
+                "consistency_check_action",
+                state -> {
+                    if (state.isWorkflowFailed())
+                        return CompletableFuture.completedFuture(END);
+                    Double score = state.getActionConsistencyScore();
+                    int retry = state.getActionRetryCount();
+                    if (score != null && score >= getThreshold(ACTION_EXTRACTION_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Success");
+                    if (retry >= getMaxRetries(ACTION_EXTRACTION_PROMPT_KEY))
+                        return CompletableFuture.completedFuture("Failure");
+                    return CompletableFuture.completedFuture("Retry");
+                },
+                Map.of("Retry", "refine_action_prompt", "Success", END, "Failure", END));
+
+        workflow.addEdge("refine_action_prompt", "action_extract_agent");
 
         this.compiledGraph = workflow.compile();
         return this.compiledGraph;
@@ -217,7 +323,7 @@ public class DecompositionWorkflow {
 
     private CompletableFuture<Map<String, Object>> validateNode(WorkflowState state) {
         logger.info("Calling Validation Agent...");
-        return validationAgent.execute(state.getInput())
+        return validationAgent.execute(state.getInput(), state.getTraceId())
                 .thenApply(agentState -> Map.of(
                         "validationResponse", agentState.getValidationResult(),
                         "valid", String.valueOf(agentState.isValid())));
@@ -243,11 +349,16 @@ public class DecompositionWorkflow {
             logger.info("Using refined system prompt from previous iteration");
         }
 
-        return decompositionAgent.execute(state.getInput(), systemPrompt)
+        return decompositionAgent.execute(state.getInput(), systemPrompt, state.getTraceId())
+                .exceptionally(ex -> {
+                    logger.error("Decomposition Agent failed with exception", ex);
+                    return null; // Return null to trigger failure handling in thenApply
+                })
                 .thenApply(agentState -> {
-                    if (agentState.isFailed()) {
+                    if (agentState == null) {
                         return Map.of("workflowFailed", true, "failureReason", "Decomposition Agent Failed");
                     }
+
                     DecompositionResult result = agentState.getDecompositionResult();
                     RuleTree<NodeData> tree = agentState.getTree();
 
@@ -282,8 +393,16 @@ public class DecompositionWorkflow {
             return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
         }
 
-        return consistencyAgent.execute(tree, "root")
+        return consistencyAgent.execute(tree, "root", state.getTraceId())
+                .exceptionally(ex -> {
+                    logger.error("Consistency check failed with exception", ex);
+                    return null;
+                })
                 .thenApply(consistencyState -> {
+                    if (consistencyState == null) {
+                        return Map.of("workflowFailed", true);
+                    }
+
                     Double score = consistencyState.getConsistencyScore();
 
                     if (score == null) {
@@ -318,7 +437,7 @@ public class DecompositionWorkflow {
         String feedback = state.getFeedback();
 
         String refinedPrompt = promptRefinementAgent.refinePrompt(originalPrompt, inputText, previousOutput, feedback,
-                currentRetry + 1);
+                currentRetry + 1, state.getTraceId());
 
         if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
             logger.warn("Prompt refinement failed, keeping original prompt");
@@ -336,8 +455,6 @@ public class DecompositionWorkflow {
 
     private static final String CONDITION_EXTRACTION_PROMPT_KEY = "condition_extraction_prompt";
 
-    // ... (fields remain same)
-
     private CompletableFuture<Map<String, Object>> conditionExtractionNode(WorkflowState state) {
         int retryCount = state.getConditionRetryCount();
         int maxRetries = getMaxRetries(CONDITION_EXTRACTION_PROMPT_KEY);
@@ -351,7 +468,7 @@ public class DecompositionWorkflow {
             logger.info("Using refined condition prompt string.");
         }
 
-        return conditionExtractionAgent.execute(tree, customPromptKey, customPromptString)
+        return conditionExtractionAgent.execute(tree, customPromptKey, customPromptString, state.getTraceId())
                 .thenApply(conditionState -> {
                     if (conditionState.isFailed()) {
                         logger.warn("Condition Extraction failed or produced no updates.");
@@ -367,11 +484,7 @@ public class DecompositionWorkflow {
         logger.info("═══ CONSISTENCY CHECK (Condition) ═══");
         RuleTree<NodeData> tree = state.getTree();
 
-        if (tree == null) {
-            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
-        }
-
-        return consistencyAgent.execute(tree, "condition")
+        return consistencyAgent.execute(tree, "condition", state.getTraceId())
                 .thenApply(consistencyState -> {
                     Double score = consistencyState.getConsistencyScore();
                     if (score == null) {
@@ -409,7 +522,7 @@ public class DecompositionWorkflow {
         String previousOutput = "";
 
         String refinedPrompt = promptRefinementAgent.refinePrompt(originalPrompt, inputText, previousOutput, feedback,
-                currentRetry + 1);
+                currentRetry + 1, state.getTraceId());
 
         if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
             logger.warn("Condition prompt refinement failed, keeping original prompt");
@@ -424,13 +537,46 @@ public class DecompositionWorkflow {
     }
 
     private CompletableFuture<Map<String, Object>> scheduleExtractionNode(WorkflowState state) {
-        logger.info("═══ SCHEDULE EXTRACTION AGENT (Dummy) ═══");
+        logger.info("═══ SCHEDULE EXTRACTION AGENT (Retry {}/{}) ═══", state.getScheduleRetryCount() + 1,
+                getMaxRetries(SCHEDULE_EXTRACTION_PROMPT_KEY) + 1);
         RuleTree<NodeData> tree = state.getTree();
 
-        return scheduleExtractionAgent.execute(tree)
+        return scheduleExtractionAgent.execute(tree, state.getTraceId())
                 .thenApply(scheduleState -> {
                     logger.info("Schedule Extraction completed.");
                     return Map.of("tree", scheduleState.getTree() != null ? scheduleState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> consistencyCheckScheduleNode(WorkflowState state) {
+        logger.info("═══ CONSISTENCY CHECK (Schedule) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        return consistencyAgent.execute(tree, "schedule", state.getTraceId())
+                .thenApply(consistencyState -> {
+                    Double score = consistencyState.getConsistencyScore();
+                    if (score == null)
+                        score = 0.0;
+                    logger.info("Schedule Consistency score: {}", score);
+                    String feedback = generateFeedback(tree, score, "schedule",
+                            getThreshold(SCHEDULE_EXTRACTION_PROMPT_KEY));
+                    return Map.of(
+                            "scheduleConsistencyScore", score,
+                            "scheduleFeedback", feedback,
+                            "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> refineSchedulePromptNode(WorkflowState state) {
+        // ... (Logic calls PromptRefinementAgent)
+        return refinePromptGeneric(state, SCHEDULE_EXTRACTION_PROMPT_KEY,
+                state.getScheduleRetryCount(), state.getScheduleFeedback(),
+                state.getCurrentSchedulePromptString(), "Schedule")
+                .thenApply(map -> {
+                    Map<String, Object> result = new java.util.HashMap<>(map);
+                    result.put("currentSchedulePromptString", map.get("refinedPrompt"));
+                    result.put("scheduleRetryCount", ((Integer) map.get("retryCount")));
+                    return result;
                 });
     }
 
@@ -438,18 +584,10 @@ public class DecompositionWorkflow {
         logger.info("═══ RULE CONVERTER AGENT ═══");
         RuleTree<NodeData> tree = state.getTree();
 
-        if (tree == null) {
-            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
-        }
-
-        return ruleConverterAgent.execute(tree)
+        return ruleConverterAgent.execute(tree, state.getCurrentRuleConverterPromptString(), state.getTraceId())
                 .thenApply(converterState -> {
-                    if (converterState.isFailed()) {
-                        logger.warn("Rule Converter failed.");
-                    } else {
-                        logger.info("Rule conversion completed.");
-                        asciiRenderer.render(converterState.getTree());
-                    }
+                    logger.info("Rule conversion completed.");
+                    asciiRenderer.render(converterState.getTree());
                     return Map.of("tree", converterState.getTree() != null ? converterState.getTree() : tree);
                 });
     }
@@ -458,17 +596,9 @@ public class DecompositionWorkflow {
         logger.info("═══ ACTION EXTRACTION AGENT ═══");
         RuleTree<NodeData> tree = state.getTree();
 
-        if (tree == null) {
-            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
-        }
-
-        return actionExtractionAgent.execute(tree)
+        return actionExtractionAgent.execute(tree, state.getCurrentActionPromptString(), state.getTraceId())
                 .thenApply(actionState -> {
-                    if (actionState.isFailed()) {
-                        logger.warn("Action Extraction failed.");
-                    } else {
-                        logger.info("Action extraction completed.");
-                    }
+                    logger.info("Action extraction completed.");
                     return Map.of("tree", actionState.getTree() != null ? actionState.getTree() : tree);
                 });
     }
@@ -497,23 +627,140 @@ public class DecompositionWorkflow {
         return val != null ? Integer.parseInt(val) : 3;
     }
 
+    // Generic Helper for Prompt Refinement to reduce boilerplate
+    private CompletableFuture<Map<String, Object>> refinePromptGeneric(WorkflowState state, String promptKey,
+            int currentRetry, String feedback,
+            String currentPrompt, String stageName) {
+        int maxRetries = getMaxRetries(promptKey);
+        logger.info("═══ PROMPT REFINEMENT ({} - Retry {}/{}) ═══", stageName, currentRetry + 1, maxRetries);
+
+        String originalPrompt = currentPrompt;
+        if (originalPrompt == null || originalPrompt.trim().isEmpty()) {
+            originalPrompt = PromptRegistry.getInstance().get(promptKey);
+        }
+
+        String inputText = state.getInput();
+        String previousOutput = ""; // Ideally get previous output from state
+
+        String refinedPrompt = promptRefinementAgent.refinePrompt(originalPrompt, inputText, previousOutput, feedback,
+                currentRetry + 1, state.getTraceId());
+
+        if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
+            logger.warn("{} prompt refinement failed, keeping original.", stageName);
+            refinedPrompt = originalPrompt;
+        } else {
+            logger.info("Successfully generated refined {} prompt", stageName);
+        }
+
+        return CompletableFuture
+                .completedFuture(Map.of("refinedPrompt", refinedPrompt, "retryCount", currentRetry + 1));
+    }
+
+    // --- Action Nodes ---
+    private CompletableFuture<Map<String, Object>> consistencyCheckActionNode(WorkflowState state) {
+        logger.info("═══ CONSISTENCY CHECK (Action) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        return consistencyAgent.execute(tree, "action", state.getTraceId())
+                .thenApply(consistencyState -> {
+                    Double score = consistencyState.getConsistencyScore();
+                    if (score == null)
+                        score = 0.0;
+                    logger.info("Action Consistency score: {}", score);
+                    String feedback = generateFeedback(tree, score, "action",
+                            getThreshold(ACTION_EXTRACTION_PROMPT_KEY));
+                    return Map.of(
+                            "actionConsistencyScore", score,
+                            "actionFeedback", feedback,
+                            "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> refineActionPromptNode(WorkflowState state) {
+        return refinePromptGeneric(state, ACTION_EXTRACTION_PROMPT_KEY,
+                state.getActionRetryCount(), state.getActionFeedback(),
+                state.getCurrentActionPromptString(), "Action")
+                .thenApply(map -> {
+                    Map<String, Object> result = new java.util.HashMap<>(map);
+                    result.put("currentActionPromptString", map.get("refinedPrompt"));
+                    result.put("actionRetryCount", ((Integer) map.get("retryCount")));
+                    return result;
+                });
+    }
+
+    // --- Rule Converter Nodes ---
     private CompletableFuture<Map<String, Object>> unifiedRuleNode(WorkflowState state) {
         logger.info("═══ UNIFIED RULE AGENT ═══");
         RuleTree<NodeData> tree = state.getTree();
 
-        if (tree == null) {
-            return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
-        }
-
-        return unifiedRuleAgent.execute(tree)
+        return unifiedRuleAgent.execute(tree, state.getCurrentUnifiedRulePromptString(), state.getTraceId())
                 .thenApply(agentState -> {
-                    if (agentState.isFailed()) {
-                        logger.warn("Unified Rule Logic failed.");
-                    } else {
-                        logger.info("Unified Rule Logic completed.");
-                        asciiRenderer.render(agentState.getTree());
-                    }
+                    asciiRenderer.render(agentState.getTree());
                     return Map.of("tree", agentState.getTree() != null ? agentState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> consistencyCheckConverterNode(WorkflowState state) {
+        logger.info("═══ CONSISTENCY CHECK (RuleConverter) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        return consistencyAgent.execute(tree, "rule_converter", state.getTraceId())
+                .thenApply(consistencyState -> {
+                    Double score = consistencyState.getConsistencyScore();
+                    if (score == null)
+                        score = 0.0;
+                    logger.info("Rule Converter Consistency score: {}", score);
+                    String feedback = generateFeedback(tree, score, "rule_converter",
+                            getThreshold(RULE_CONVERTER_PROMPT_KEY));
+                    return Map.of(
+                            "ruleConverterConsistencyScore", score,
+                            "ruleConverterFeedback", feedback,
+                            "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> refineConverterPromptNode(WorkflowState state) {
+        return refinePromptGeneric(state, RULE_CONVERTER_PROMPT_KEY,
+                state.getRuleConverterRetryCount(), state.getRuleConverterFeedback(),
+                state.getCurrentRuleConverterPromptString(), "RuleConverter")
+                .thenApply(map -> {
+                    Map<String, Object> result = new java.util.HashMap<>(map);
+                    result.put("currentRuleConverterPromptString", map.get("refinedPrompt"));
+                    result.put("ruleConverterRetryCount", ((Integer) map.get("retryCount")));
+                    return result;
+                });
+    }
+
+    // --- Unified Rule Nodes ---
+    private CompletableFuture<Map<String, Object>> consistencyCheckUnifiedNode(WorkflowState state) {
+        logger.info("═══ CONSISTENCY CHECK (UnifiedRule) ═══");
+        RuleTree<NodeData> tree = state.getTree();
+
+        return consistencyAgent.execute(tree, "unified_rule", state.getTraceId())
+                .thenApply(consistencyState -> {
+                    Double score = consistencyState.getConsistencyScore();
+                    if (score == null)
+                        score = 0.0;
+                    logger.info("Unified Rule Consistency score: {}", score);
+                    String feedback = generateFeedback(tree, score, "unified_rule",
+                            getThreshold(UNIFIED_RULE_PROMPT_KEY));
+                    return Map.of(
+                            "unifiedRuleConsistencyScore", score,
+                            "unifiedRuleFeedback", feedback,
+                            "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> refineUnifiedPromptNode(WorkflowState state) {
+        return refinePromptGeneric(state, UNIFIED_RULE_PROMPT_KEY,
+                state.getUnifiedRuleRetryCount(), state.getUnifiedRuleFeedback(),
+                state.getCurrentUnifiedRulePromptString(), "UnifiedRule")
+
+                .thenApply(map -> {
+                    Map<String, Object> result = new java.util.HashMap<>(map);
+                    result.put("currentUnifiedRulePromptString", map.get("refinedPrompt"));
+                    result.put("unifiedRuleRetryCount", ((Integer) map.get("retryCount")));
+                    return result;
                 });
     }
 

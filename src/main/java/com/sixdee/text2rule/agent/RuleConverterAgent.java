@@ -42,6 +42,14 @@ public class RuleConverterAgent {
         public boolean isFailed() {
             return (boolean) this.data().getOrDefault("failed", false);
         }
+
+        public String getCustomPrompt() {
+            return (String) this.data().get("customPrompt");
+        }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
+        }
     }
 
     public RuleConverterAgent(ChatLanguageModel lang4jService) {
@@ -64,28 +72,30 @@ public class RuleConverterAgent {
     }
 
     private CompletableFuture<Map<String, Object>> convertNode(ConverterState state) {
-        logger.info("RuleConverterAgent: Executing Convert Node...");
+        logger.info("RuleConverterAgent: Starting conversion...");
         RuleTree<NodeData> tree = state.getTree();
         if (tree == null) {
             return CompletableFuture.completedFuture(Map.of("failed", true));
         }
 
+        String customPrompt = state.getCustomPrompt();
+
         try {
-            convertRules(tree);
+            convertRules(tree, customPrompt, state.getTraceId());
         } catch (Exception e) {
             logger.error("Error in rule conversion node", e);
-            return CompletableFuture.completedFuture(Map.of("failed", true));
+            throw new RuntimeException("Rule Conversion Failed", e);
         }
         return CompletableFuture.completedFuture(Map.of("tree", tree));
     }
 
-    private void convertRules(RuleTree<NodeData> tree) {
+    private void convertRules(RuleTree<NodeData> tree, String customPrompt, String traceId) {
         if (tree == null || tree.getRoot() == null)
             return;
-        processNode(tree.getRoot());
+        processNode(tree.getRoot(), customPrompt, traceId);
     }
 
-    private void processNode(RuleNode<NodeData> node) {
+    private void processNode(RuleNode<NodeData> node, String customPrompt, String traceId) {
         if (node == null)
             return;
 
@@ -99,18 +109,23 @@ public class RuleConverterAgent {
             String ruleText = node.getData().getInput();
             logger.info("Converting rule for Segment node: {}", ruleText);
 
+            String jsonResponse = null;
+            boolean success = false;
             try {
-                String promptTemplate = PromptRegistry.getInstance().get(DEFAULT_PROMPT_KEY);
+                String promptTemplate;
+                if (customPrompt != null && !customPrompt.trim().isEmpty()) {
+                    promptTemplate = customPrompt;
+                } else {
+                    promptTemplate = PromptRegistry.getInstance().get(DEFAULT_PROMPT_KEY);
+                }
+
                 String prompt = promptTemplate.replace("{{ $json['output.normal_statements'] }}", ruleText);
                 logger.info("RuleConverterAgent: Sending prompt to LLM...");
                 // Rate limit protection: 12-second delay
-                try {
-                    Thread.sleep(12000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                String jsonResponse = lang4jService.generate(prompt);
-                logger.info("RuleConverterAgent: Received response from LLM");
+                // Rate limit
+                com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
+                jsonResponse = lang4jService.generate(prompt);
+                logger.info("RuleConverterAgent: Received response from LLM.");
 
                 // Clean JSON
                 int startIndex = jsonResponse.indexOf("{");
@@ -129,10 +144,70 @@ public class RuleConverterAgent {
                     logger.warn("Rule conversion returned null result");
                 }
 
+                success = true;
+
+                // Observability: Capture Event (Success)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", prompt);
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "RuleConverterAgent",
+                        messages,
+                        jsonResponse,
+                        "Rule Extended",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
             } catch (JsonProcessingException e) {
                 logger.error("Failed to parse rule conversion response", e);
+                jsonResponse = "JSON Error: " + e.getMessage();
+
+                // Observability: Capture Event (JSON Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", ruleText); // Fallback
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "RuleConverterAgent",
+                        messages,
+                        jsonResponse,
+                        "Rule Extension Failed",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
+                throw new RuntimeException("Rule Conversion JSON Parsing Failed", e);
+
             } catch (Exception e) {
                 logger.error("Error during rule conversion", e);
+                jsonResponse = "Error: " + e.getMessage();
+
+                // Observability: Capture Event (General Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", ruleText); // Fallback
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "RuleConverterAgent",
+                        messages,
+                        jsonResponse,
+                        "Rule Extension Failed",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
+                throw new RuntimeException("Rule Conversion Process Failed", e);
             }
         }
 
@@ -150,7 +225,6 @@ public class RuleConverterAgent {
         // Wait, "Segment" nodes were leaf nodes (created by ConditionExtractionAgent).
         // So they shouldn't have children before we start, or if they do (Schedule?),
         // we cleared them.
-
         // However, we need to traverse down to find the "Segment" nodes.
         // If the node is NOT a Segment, we recurse.
         if (!"Segment".equalsIgnoreCase(node.getData().getType()) && node.getChildren() != null) {
@@ -158,8 +232,9 @@ public class RuleConverterAgent {
             // we don't modify the *current* node's children list while iterating it.
             // We are modifying `node`'s children only if `node` is "Segment".
             // If `node` is NOT "Segment", we iterate its children.
+            // If `node` is NOT "Segment", we iterate its children.
             for (RuleNode<NodeData> child : node.getChildren()) {
-                processNode(child);
+                processNode(child, customPrompt, traceId);
             }
         }
     }
@@ -201,10 +276,22 @@ public class RuleConverterAgent {
     }
 
     public CompletableFuture<ConverterState> execute(RuleTree<NodeData> tree) {
+        return execute(tree, null);
+    }
+
+    public CompletableFuture<ConverterState> execute(RuleTree<NodeData> tree, String customPrompt) {
+        return execute(tree, customPrompt, null);
+    }
+
+    public CompletableFuture<ConverterState> execute(RuleTree<NodeData> tree, String customPrompt, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Map<String, Object> input = new HashMap<>();
                 input.put("tree", tree);
+                input.put("traceId", traceId != null ? traceId : java.util.UUID.randomUUID().toString());
+                if (customPrompt != null) {
+                    input.put("customPrompt", customPrompt);
+                }
                 return compiledGraph.invoke(input).orElse(null);
             } catch (Exception e) {
                 logger.error("Error executing RuleConverterAgent", e);

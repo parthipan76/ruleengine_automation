@@ -14,6 +14,14 @@ public class WorkflowState extends AgentState {
         super(new HashMap<>(initData));
     }
 
+    public String getTraceId() {
+        return (String) this.data().get("traceId");
+    }
+
+    public void setTraceId(String traceId) {
+        this.data().put("traceId", traceId);
+    }
+
     public String getInput() {
         return (String) this.data().get("input");
     }
@@ -173,6 +181,140 @@ public class WorkflowState extends AgentState {
 
     public void setActionPreviousOutput(String output) {
         this.data().put("actionPreviousOutput", output);
+    }
+
+    public String getCurrentActionPromptString() {
+        return (String) this.data().get("currentActionPromptString");
+    }
+
+    public void setCurrentActionPromptString(String promptString) {
+        this.data().put("currentActionPromptString", promptString);
+    }
+
+    // Schedule extraction retry fields
+    public int getScheduleRetryCount() {
+        return (int) this.data().getOrDefault("scheduleRetryCount", 0);
+    }
+
+    public void incrementScheduleRetryCount() {
+        int count = getScheduleRetryCount();
+        this.data().put("scheduleRetryCount", count + 1);
+    }
+
+    public Double getScheduleConsistencyScore() {
+        return (Double) this.data().get("scheduleConsistencyScore");
+    }
+
+    public void setScheduleConsistencyScore(Double score) {
+        this.data().put("scheduleConsistencyScore", score);
+    }
+
+    public String getScheduleFeedback() {
+        return (String) this.data().get("scheduleFeedback");
+    }
+
+    public void setScheduleFeedback(String feedback) {
+        this.data().put("scheduleFeedback", feedback);
+    }
+
+    public String getSchedulePreviousOutput() {
+        return (String) this.data().get("schedulePreviousOutput");
+    }
+
+    public void setSchedulePreviousOutput(String output) {
+        this.data().put("schedulePreviousOutput", output);
+    }
+
+    public String getCurrentSchedulePromptString() {
+        return (String) this.data().get("currentSchedulePromptString");
+    }
+
+    public void setCurrentSchedulePromptString(String promptString) {
+        this.data().put("currentSchedulePromptString", promptString);
+    }
+
+    // Rule Converter retry fields
+    public int getRuleConverterRetryCount() {
+        return (int) this.data().getOrDefault("ruleConverterRetryCount", 0);
+    }
+
+    public void incrementRuleConverterRetryCount() {
+        int count = getRuleConverterRetryCount();
+        this.data().put("ruleConverterRetryCount", count + 1);
+    }
+
+    public Double getRuleConverterConsistencyScore() {
+        return (Double) this.data().get("ruleConverterConsistencyScore");
+    }
+
+    public void setRuleConverterConsistencyScore(Double score) {
+        this.data().put("ruleConverterConsistencyScore", score);
+    }
+
+    public String getRuleConverterFeedback() {
+        return (String) this.data().get("ruleConverterFeedback");
+    }
+
+    public void setRuleConverterFeedback(String feedback) {
+        this.data().put("ruleConverterFeedback", feedback);
+    }
+
+    public String getRuleConverterPreviousOutput() {
+        return (String) this.data().get("ruleConverterPreviousOutput");
+    }
+
+    public void setRuleConverterPreviousOutput(String output) {
+        this.data().put("ruleConverterPreviousOutput", output);
+    }
+
+    public String getCurrentRuleConverterPromptString() {
+        return (String) this.data().get("currentRuleConverterPromptString");
+    }
+
+    public void setCurrentRuleConverterPromptString(String promptString) {
+        this.data().put("currentRuleConverterPromptString", promptString);
+    }
+
+    // Unified Rule retry fields
+    public int getUnifiedRuleRetryCount() {
+        return (int) this.data().getOrDefault("unifiedRuleRetryCount", 0);
+    }
+
+    public void incrementUnifiedRuleRetryCount() {
+        int count = getUnifiedRuleRetryCount();
+        this.data().put("unifiedRuleRetryCount", count + 1);
+    }
+
+    public Double getUnifiedRuleConsistencyScore() {
+        return (Double) this.data().get("unifiedRuleConsistencyScore");
+    }
+
+    public void setUnifiedRuleConsistencyScore(Double score) {
+        this.data().put("unifiedRuleConsistencyScore", score);
+    }
+
+    public String getUnifiedRuleFeedback() {
+        return (String) this.data().get("unifiedRuleFeedback");
+    }
+
+    public void setUnifiedRuleFeedback(String feedback) {
+        this.data().put("unifiedRuleFeedback", feedback);
+    }
+
+    public String getUnifiedRulePreviousOutput() {
+        return (String) this.data().get("unifiedRulePreviousOutput");
+    }
+
+    public void setUnifiedRulePreviousOutput(String output) {
+        this.data().put("unifiedRulePreviousOutput", output);
+    }
+
+    public String getCurrentUnifiedRulePromptString() {
+        return (String) this.data().get("currentUnifiedRulePromptString");
+    }
+
+    public void setCurrentUnifiedRulePromptString(String promptString) {
+        this.data().put("currentUnifiedRulePromptString", promptString);
     }
 
     public boolean isWorkflowFailed() {

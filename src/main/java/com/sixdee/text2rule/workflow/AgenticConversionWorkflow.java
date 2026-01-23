@@ -236,7 +236,7 @@ public class AgenticConversionWorkflow {
 
     private CompletableFuture<Map<String, Object>> validateNode(WorkflowState state) {
         logger.info("Calling Validation Agent...");
-        return validationAgent.execute(state.getInput())
+        return validationAgent.execute(state.getInput(), state.getTraceId())
                 .thenApply(agentState -> Map.of(
                         "validationResponse", agentState.getValidationResult(),
                         "valid", String.valueOf(agentState.isValid())));
@@ -261,7 +261,7 @@ public class AgenticConversionWorkflow {
             logger.info("Using refined system prompt from previous iteration");
         }
 
-        return decompositionAgent.execute(state.getInput(), systemPrompt)
+        return decompositionAgent.execute(state.getInput(), systemPrompt, state.getTraceId())
                 .thenApply(agentState -> {
                     if (agentState.isFailed()) {
                         return Map.of("workflowFailed", true, "failureReason", "Decomposition Agent Failed");
@@ -300,7 +300,7 @@ public class AgenticConversionWorkflow {
             return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
         }
 
-        return consistencyAgent.execute(tree, "root")
+        return consistencyAgent.execute(tree, "root", state.getTraceId())
                 .thenApply(consistencyState -> {
                     Double score = consistencyState.getConsistencyScore();
 
@@ -334,7 +334,7 @@ public class AgenticConversionWorkflow {
         String feedback = state.getFeedback();
 
         String refinedPrompt = promptRefinementAgent.refinePrompt(originalPrompt, inputText, previousOutput, feedback,
-                currentRetry + 1);
+                currentRetry + 1, state.getTraceId());
 
         if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
             logger.warn("Prompt refinement failed, keeping original prompt");
@@ -357,7 +357,7 @@ public class AgenticConversionWorkflow {
         RuleTree<NodeData> tree = state.getTree();
         String customPromptKey = state.getCurrentConditionPromptKey();
 
-        return conditionAgent.execute(tree, customPromptKey)
+        return conditionAgent.execute(tree, customPromptKey, null, state.getTraceId())
                 .thenApply(agentState -> {
                     if (agentState.isFailed()) {
                         return Map.of("workflowFailed", true, "failureReason", "Condition Agent Failed");
@@ -385,7 +385,7 @@ public class AgenticConversionWorkflow {
             return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
         }
 
-        return consistencyAgent.execute(tree, "condition")
+        return consistencyAgent.execute(tree, "condition", state.getTraceId())
                 .thenApply(consistencyState -> {
                     Double score = consistencyState.getConsistencyScore();
 
@@ -430,7 +430,7 @@ public class AgenticConversionWorkflow {
         RuleTree<NodeData> tree = state.getTree();
         String customPromptKey = state.getCurrentActionPromptKey();
 
-        return actionAgent.execute(tree, customPromptKey)
+        return actionAgent.execute(tree, customPromptKey, state.getTraceId())
                 .thenApply(agentState -> {
                     if (agentState.isFailed()) {
                         return Map.of("workflowFailed", true);
@@ -458,7 +458,7 @@ public class AgenticConversionWorkflow {
             return CompletableFuture.completedFuture(Map.of("workflowFailed", true));
         }
 
-        return consistencyAgent.execute(tree, "action")
+        return consistencyAgent.execute(tree, "action", state.getTraceId())
                 .thenApply(consistencyState -> {
                     Double score = consistencyState.getConsistencyScore();
 

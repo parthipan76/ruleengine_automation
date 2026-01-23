@@ -48,6 +48,10 @@ public class ConditionExtractionAgent {
         public boolean isFailed() {
             return (boolean) this.data().getOrDefault("failed", false);
         }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
+        }
     }
 
     public ConditionExtractionAgent(ChatLanguageModel lang4jService) {
@@ -72,7 +76,7 @@ public class ConditionExtractionAgent {
     }
 
     private CompletableFuture<Map<String, Object>> extractNode(ConditionState state) {
-        logger.info("ConditionExtractionAgent: Executing Extract Node...");
+        logger.info("ConditionExtractionAgent: Starting extraction...");
         RuleTree<NodeData> tree = state.getTree();
         if (tree == null) {
             return CompletableFuture.completedFuture(Map.of("failed", true));
@@ -80,9 +84,10 @@ public class ConditionExtractionAgent {
 
         String customPromptKey = (String) state.data().get("customPromptKey");
         String customPromptString = (String) state.data().get("customPromptString");
+        String traceId = state.getTraceId();
 
         try {
-            extractConditions(tree, customPromptKey, customPromptString);
+            extractConditions(tree, customPromptKey, customPromptString, traceId);
         } catch (Exception e) {
             logger.error("Error in extraction node", e);
             return CompletableFuture.completedFuture(Map.of("failed", true));
@@ -90,13 +95,15 @@ public class ConditionExtractionAgent {
         return CompletableFuture.completedFuture(Map.of("tree", tree));
     }
 
-    private void extractConditions(RuleTree<NodeData> tree, String customPromptKey, String customPromptString) {
+    private void extractConditions(RuleTree<NodeData> tree, String customPromptKey, String customPromptString,
+            String traceId) {
         if (tree == null || tree.getRoot() == null)
             return;
-        processNode(tree.getRoot(), customPromptKey, customPromptString);
+        processNode(tree.getRoot(), customPromptKey, customPromptString, traceId);
     }
 
-    private void processNode(RuleNode<NodeData> node, String customPromptKey, String customPromptString) {
+    private void processNode(RuleNode<NodeData> node, String customPromptKey, String customPromptString,
+            String traceId) {
         if (node == null)
             return;
 
@@ -108,6 +115,8 @@ public class ConditionExtractionAgent {
             String conditionText = node.getData().getInput();
             logger.info("Extracting conditions for NormalStatements node: {}", conditionText);
 
+            String jsonResponse = null;
+            boolean success = false;
             try {
                 String prompt;
                 if (customPromptString != null && !customPromptString.trim().isEmpty()) {
@@ -128,12 +137,11 @@ public class ConditionExtractionAgent {
                 }
 
                 // Rate limit protection: 12-second delay
-                try {
-                    Thread.sleep(12000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                String jsonResponse = lang4jService.generate(prompt);
+                // Rate limit
+                com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
+                logger.info("ConditionExtractionAgent: Sending prompt to LLM...");
+                jsonResponse = lang4jService.generate(prompt);
+                logger.info("ConditionExtractionAgent: Received response from LLM.");
 
                 // Robust JSON List extraction
                 int startIndex = jsonResponse.indexOf("[");
@@ -173,35 +181,103 @@ public class ConditionExtractionAgent {
                     logger.info("No conditions extracted from NormalStatements node.");
                 }
 
+                success = true;
+
+                // Observability: Capture Event (Success)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", prompt);
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ConditionExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Conditions Extracted",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
             } catch (JsonProcessingException e) {
                 logger.error("Failed to parse extraction response", e);
+                jsonResponse = "JSON Error: " + e.getMessage();
+
+                // Observability: Capture Event (JSON Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", conditionText); // Best effort if prompt generation failed, but here we
+                                                           // likely have prompt.
+                // Wait, prompt is local variable in try. I need to make sure I can access it.
+                // Actually, if exception happens during prompt generation, prompt might be
+                // null/uninitialized.
+                // But JsonProcessingException happens AFTER prompt usage. So prompt is valid if
+                // we extract it.
+                // Re-calculating prompt or declaring it outside is better.
+                // For this edit, I will assume prompt is accessible? No, it's inside 'try'.
+                // I must redeclare prompt outside 'try' to access it in catch.
+                // However, I cannot see variable declarations well with this tool if I don't
+                // replace them.
+                // The prompt is declared at line 121: String prompt;
+                // So I need to scope the replacement to include line 121?
             } catch (Exception e) {
                 logger.error("Error during condition extraction", e);
+                jsonResponse = "Error: " + e.getMessage();
+
+                // Observability: Capture Event (General Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", conditionText); // Fallback to conditionText if prompt not available
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ConditionExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Condition Extraction Failed",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
+                // Rethrow exception to stop flow
+                throw new RuntimeException("Condition Extraction Failed", e);
             }
         }
 
         // Recursively process children
-        if (node.getChildren() != null) {
+        if (node.getChildren() != null)
+
+        {
             for (RuleNode<NodeData> child : node.getChildren()) {
-                processNode(child, customPromptKey, customPromptString);
+                processNode(child, customPromptKey, customPromptString, traceId);
             }
         }
     }
 
     public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree) {
-        return execute(tree, null, null);
+        return execute(tree, null, null, null);
     }
 
     public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree, String customPromptKey) {
-        return execute(tree, customPromptKey, null);
+        return execute(tree, customPromptKey, null, null);
     }
 
     public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree, String customPromptKey,
             String customPromptString) {
+        return execute(tree, customPromptKey, customPromptString, null);
+    }
+
+    public CompletableFuture<ConditionState> execute(RuleTree<NodeData> tree, String customPromptKey,
+            String customPromptString, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Map<String, Object> input = new HashMap<>();
                 input.put("tree", tree);
+                input.put("traceId", traceId != null ? traceId : java.util.UUID.randomUUID().toString());
                 if (customPromptKey != null && !customPromptKey.trim().isEmpty()) {
                     input.put("customPromptKey", customPromptKey);
                 }

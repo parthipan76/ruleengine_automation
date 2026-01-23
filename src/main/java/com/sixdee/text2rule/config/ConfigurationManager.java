@@ -44,6 +44,16 @@ public class ConfigurationManager {
             throw new ConfigurationException("Configuration initialization failed", e);
         }
     }
+    
+    
+    /**
+     * Check if DSL renderer is enabled.
+     */
+    public boolean isDslRendererEnabled() {
+        return (Boolean) configCache.getOrDefault("renderer.dsl.enabled", false);
+    }
+
+    
 
     /**
      * Double-checked locking Singleton pattern.
@@ -103,6 +113,12 @@ public class ConfigurationManager {
 
             // Load Supabase configuration from <supabase> section
             loadSupabaseConfig(doc);
+
+            // Load Observability configuration from <observability> section
+            loadObservabilityConfig(doc);
+
+            // Load Rate Limiting configuration from <ratelimiting> section
+            loadRateLimitConfig(doc);
 
         } catch (Exception e) {
             logger.error("Failed to parse config.xml [error={}]", e.getMessage(), e);
@@ -245,6 +261,15 @@ public class ConfigurationManager {
                         boolean enabled = Boolean.parseBoolean(graphElement.getAttribute("enabled"));
                         configCache.put("renderer.graph.enabled", enabled);
                     }
+                    
+                 // Load DSL renderer setting
+                    org.w3c.dom.NodeList dslNodes = renderersElement.getElementsByTagName("dsl");
+                    if (dslNodes.getLength() > 0) {
+                        org.w3c.dom.Element dslElement = (org.w3c.dom.Element) dslNodes.item(0);
+                        boolean enabled = Boolean.parseBoolean(dslElement.getAttribute("enabled"));
+                        configCache.put("renderer.dsl.enabled", enabled);
+                    }
+
 
                     logger.debug(
                             "Loaded rendering configuration [ascii={}, mermaid={}, json={}, consistency={}, graph={}]",
@@ -454,6 +479,60 @@ public class ConfigurationManager {
 
     public int getSupabaseMaxRetries() {
         return (Integer) configCache.getOrDefault("supabase.max.retries", 3);
+    }
+
+    // ===== Observability Configuration =====
+
+    private void loadObservabilityConfig(org.w3c.dom.Document doc) {
+        try {
+            org.w3c.dom.NodeList observabilityNodes = doc.getElementsByTagName("observability");
+            if (observabilityNodes.getLength() > 0) {
+                org.w3c.dom.Element obsElement = (org.w3c.dom.Element) observabilityNodes.item(0);
+                configCache.put("observability.url", getElementText(obsElement, "url", ""));
+                configCache.put("observability.api.key", getElementText(obsElement, "api_key", ""));
+                configCache.put("observability.secret.key", getElementText(obsElement, "secret_key", ""));
+                logger.debug("Loaded Observability configuration [url={}]", configCache.get("observability.url"));
+            }
+        } catch (Exception e) {
+            logger.warn("Error loading Observability config, using defaults [error={}]", e.getMessage());
+        }
+    }
+
+    public String getObservabilityUrl() {
+        return (String) configCache.getOrDefault("observability.url", "");
+    }
+
+    public String getObservabilityApiKey() {
+        return (String) configCache.getOrDefault("observability.api.key", "");
+    }
+
+    public String getObservabilitySecretKey() {
+        return (String) configCache.getOrDefault("observability.secret.key", "");
+    }
+
+    // ===== Rate Limiting Configuration =====
+
+    private void loadRateLimitConfig(org.w3c.dom.Document doc) {
+        try {
+            org.w3c.dom.NodeList nodes = doc.getElementsByTagName("ratelimiting");
+            if (nodes.getLength() > 0) {
+                org.w3c.dom.Element element = (org.w3c.dom.Element) nodes.item(0);
+                String delayStr = getElementText(element, "delay_ms", "0");
+                configCache.put("ratelimiting.delay.ms", Long.parseLong(delayStr));
+                logger.debug("Loaded Rate Limiting configuration [delay={}ms]",
+                        configCache.get("ratelimiting.delay.ms"));
+            } else {
+                configCache.put("ratelimiting.delay.ms", 0L);
+                logger.debug("Rate Limiting configuration not found, disabled (delay=0ms)");
+            }
+        } catch (Exception e) {
+            logger.warn("Error loading Rate Limiting config, using defaults (disabled) [error={}]", e.getMessage());
+            configCache.put("ratelimiting.delay.ms", 0L);
+        }
+    }
+
+    public long getRateLimitDelay() {
+        return (Long) configCache.getOrDefault("ratelimiting.delay.ms", 0L);
     }
 
     // ===== Rendering Configuration =====

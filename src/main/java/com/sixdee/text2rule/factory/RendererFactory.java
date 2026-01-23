@@ -1,19 +1,21 @@
 package com.sixdee.text2rule.factory;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.sixdee.text2rule.config.ConfigurationManager;
 import com.sixdee.text2rule.model.NodeData;
 import com.sixdee.text2rule.model.RuleTree;
 import com.sixdee.text2rule.view.AsciiRenderer;
 import com.sixdee.text2rule.view.ConsistencyRenderer;
+import com.sixdee.text2rule.view.FinalRuleDslRenderer;  // NEW: Added import
 import com.sixdee.text2rule.view.FinalRuleJsonRenderer;
 import com.sixdee.text2rule.view.MermaidRenderer;
 import com.sixdee.text2rule.view.TreeRenderer;
 import com.sixdee.text2rule.view.WorkflowGraphRenderer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Factory for creating TreeRenderer instances based on configuration.
@@ -74,6 +76,12 @@ public class RendererFactory {
             if (config.isWorkflowGraphRendererEnabled()) {
                 renderers.add(new WorkflowGraphRenderer());
                 logger.debug("Workflow Graph renderer enabled");
+            }
+
+            // NEW: Add DSL renderer if enabled
+            if (config.isDslRendererEnabled()) {
+                renderers.add(new FinalRuleDslRenderer());
+                logger.debug("DSL renderer enabled");
             }
 
             if (renderers.isEmpty()) {

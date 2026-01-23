@@ -97,6 +97,7 @@ public class LLMClientFactory {
                     .timeout(timeout)
                     .temperature(config.getTemperature())
                     .maxTokens(config.getMaxTokens())
+                    .maxRetries(1)
                     .build();
             return model;
         } catch (Exception e) {
@@ -137,6 +138,7 @@ public class LLMClientFactory {
                     .timeout(timeout)
                     .temperature(config.getTemperature())
                     .maxTokens(config.getMaxTokens())
+                    .maxRetries(1)
                     .build();
             return model;
         } catch (Exception e) {

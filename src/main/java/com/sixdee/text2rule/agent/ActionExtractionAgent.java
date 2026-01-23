@@ -1,6 +1,5 @@
 package com.sixdee.text2rule.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sixdee.text2rule.config.PromptRegistry;
 import com.sixdee.text2rule.model.NodeData;
@@ -45,6 +44,10 @@ public class ActionExtractionAgent {
         public boolean isFailed() {
             return (boolean) this.data().getOrDefault("failed", false);
         }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
+        }
     }
 
     public ActionExtractionAgent(ChatLanguageModel lang4jService) {
@@ -71,7 +74,7 @@ public class ActionExtractionAgent {
     }
 
     private CompletableFuture<Map<String, Object>> extractNode(ActionState state) {
-        logger.info("ActionExtractionAgent: Executing Extract Node...");
+        logger.info("ActionExtractionAgent: Starting extraction...");
         RuleTree<NodeData> tree = state.getTree();
         if (tree == null)
             return CompletableFuture.completedFuture(Map.of("failed", true));
@@ -79,27 +82,29 @@ public class ActionExtractionAgent {
         String customPromptKey = (String) state.data().get("customPromptKey");
 
         try {
-            extractActions(tree, customPromptKey);
+            extractActions(tree, customPromptKey, state.getTraceId());
         } catch (Exception e) {
             logger.error("Error extracting actions", e);
-            return CompletableFuture.completedFuture(Map.of("failed", true));
+            throw new RuntimeException("Action Extraction Failed", e);
         }
 
         return CompletableFuture.completedFuture(Map.of("tree", tree));
     }
 
-    private void extractActions(RuleTree<NodeData> tree, String customPromptKey) {
+    private void extractActions(RuleTree<NodeData> tree, String customPromptKey, String traceId) {
         if (tree == null || tree.getRoot() == null)
             return;
-        extractActionsRecursive(tree.getRoot(), customPromptKey);
+        extractActionsRecursive(tree.getRoot(), customPromptKey, traceId);
     }
 
-    private void extractActionsRecursive(RuleNode<NodeData> node, String customPromptKey) {
+    private void extractActionsRecursive(RuleNode<NodeData> node, String customPromptKey, String traceId) {
         // Process "Action" nodes (not "Segment" nodes)
         if ("Action".equalsIgnoreCase(node.getData().getType())) {
             String actionText = node.getData().getInput();
             logger.info("Extracting campaign details for Action: {}", actionText);
 
+            String jsonResponse = null;
+            boolean success = false;
             try {
                 // Use custom prompt key if provided, otherwise use default
                 String promptKey = (customPromptKey != null && !customPromptKey.trim().isEmpty())
@@ -110,14 +115,10 @@ public class ActionExtractionAgent {
                 String prompt = promptTemplate.replace("{{ $json.action_text }}", actionText);
 
                 logger.info("ActionExtractionAgent: Sending prompt to LLM...");
-                // Rate limit protection: 12-second delay
-                try {
-                    Thread.sleep(12000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                String jsonResponse = lang4jService.generate(prompt);
-                logger.info("ActionExtractionAgent: Received response from LLM");
+                // Rate limit
+                com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
+                jsonResponse = lang4jService.generate(prompt);
+                logger.info("ActionExtractionAgent: Received response from LLM.");
 
                 // Robust JSON extraction: Find first '{' and last '}'
                 jsonResponse = cleanJson(jsonResponse);
@@ -136,20 +137,53 @@ public class ActionExtractionAgent {
                 node.addChild(new RuleNode<>(actionDetailsNode));
                 logger.info("Added ActionDetails child node");
 
+                success = true;
+
+                // Observability: Capture Event (Success)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", prompt);
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ActionExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Action Extracted",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
             } catch (Exception e) {
                 logger.error("Error extracting action details. Using fallback.", e);
-                // Fallback: Create a generic action node with the raw text
-                String fallbackAction = "Action extraction failed: " + e.getMessage();
-                NodeData actionNode = new NodeData("ActionDetails", "", "", node.getData().getModelName(), "",
-                        fallbackAction);
-                node.addChild(new RuleNode<>(actionNode));
-                logger.info("Added Fallback ActionDetails child node");
+                jsonResponse = "Error: " + e.getMessage(); // For observability
+
+                // Observability: Capture Event (Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", actionText); // Fallback
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ActionExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Action Extraction Failed",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
+                throw new RuntimeException("Action Extraction Failed for node: " + actionText, e);
             }
         }
 
         if (node.getChildren() != null) {
             for (RuleNode<NodeData> child : node.getChildren()) {
-                extractActionsRecursive(child, customPromptKey);
+                extractActionsRecursive(child, customPromptKey, traceId);
             }
         }
     }
@@ -217,10 +251,15 @@ public class ActionExtractionAgent {
     }
 
     public CompletableFuture<ActionState> execute(RuleTree<NodeData> tree, String customPromptKey) {
+        return execute(tree, customPromptKey, null);
+    }
+
+    public CompletableFuture<ActionState> execute(RuleTree<NodeData> tree, String customPromptKey, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Map<String, Object> input = new HashMap<>();
                 input.put("tree", tree);
+                input.put("traceId", traceId != null ? traceId : java.util.UUID.randomUUID().toString());
                 if (customPromptKey != null && !customPromptKey.trim().isEmpty()) {
                     input.put("customPromptKey", customPromptKey);
                     logger.info("Using custom prompt key for action extraction");

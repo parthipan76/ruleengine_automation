@@ -101,7 +101,7 @@ public class ConsistencyAgent {
             return CompletableFuture.completedFuture(Map.of("tree", tree, "consistencyScore", score));
         } catch (Exception e) {
             logger.error("Error during consistency check", e);
-            return CompletableFuture.completedFuture(Map.of("consistencyScore", 0.0));
+            throw new RuntimeException("Consistency Check Failed", e);
         }
     }
 
@@ -420,11 +420,8 @@ public class ConsistencyAgent {
 
             logger.info("ConsistencyAgent: Sending prompt to LLM...");
             // Rate limit protection: 12-second delay
-            try {
-                Thread.sleep(12000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            // Rate limit
+            com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
             responseJson = lang4jService.generate(populatedPrompt);
             logger.info("ConsistencyAgent: Received response from LLM.");
 
@@ -458,6 +455,7 @@ public class ConsistencyAgent {
             }
         } catch (Exception e) {
             logger.error("Error calculating consistency score", e);
+            throw new RuntimeException("Consistency Score Calculation Failed", e);
         } finally {
             // Observability: Capture Event in Finally
             java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();

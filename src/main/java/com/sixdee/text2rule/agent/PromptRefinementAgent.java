@@ -35,7 +35,12 @@ public class PromptRefinementAgent {
      * @return A refined system prompt, or null if refinement fails
      */
     public String refinePrompt(String originalPrompt, String inputText,
-            String previousOutput, String feedback, int retryCount) {
+            String previousOutput, String feedback, int retryCount, String traceId) {
+
+        String response = null;
+        boolean success = false;
+        String populatedPrompt = null;
+        String refinedPrompt = null;
 
         try {
             String promptTemplate = PromptRegistry.getInstance().get(REFINEMENT_PROMPT_KEY);
@@ -46,23 +51,21 @@ public class PromptRefinementAgent {
             }
 
             // Populate the template with context
-            String populatedPrompt = promptTemplate
+            populatedPrompt = promptTemplate
                     .replace("{{ $json.original_prompt }}", originalPrompt != null ? originalPrompt : "")
                     .replace("{{ $json.input_text }}", inputText != null ? inputText : "")
                     .replace("{{ $json.previous_output }}", previousOutput != null ? previousOutput : "")
                     .replace("{{ $json.feedback }}", feedback != null ? feedback : "");
 
-            logger.debug("Calling LLM for prompt refinement");
+            logger.info("PromptRefinementAgent: Sending prompt to LLM...");
             // Rate limit protection: 12-second delay
-            try {
-                Thread.sleep(12000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            String response = lang4jService.generate(populatedPrompt);
+            // Rate limit
+            com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
+            response = lang4jService.generate(populatedPrompt);
+            logger.info("PromptRefinementAgent: Received response from LLM.");
 
             // Clean up the response (remove markdown code blocks if present)
-            String refinedPrompt = cleanResponse(response);
+            refinedPrompt = cleanResponse(response);
 
             if (refinedPrompt == null || refinedPrompt.trim().isEmpty()) {
                 logger.warn("LLM returned empty refined prompt");
@@ -71,11 +74,31 @@ public class PromptRefinementAgent {
 
             logger.debug("Refined Prompt Generated (Retry {}):\n{}", retryCount, refinedPrompt);
 
+            success = true;
             return refinedPrompt;
 
         } catch (Exception e) {
             logger.error("Error generating refined prompt", e);
+            response = "Error: " + e.getMessage();
             return null;
+        } finally {
+            // Observability: Capture Event in Finally
+            java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+            java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+            userMessage.put("role", "user");
+            userMessage.put("content", populatedPrompt != null ? populatedPrompt : ""); // Using populatedPrompt as
+                                                                                        // input
+            messages.add(userMessage);
+
+            com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                    traceId,
+                    "PromptRefinementAgent",
+                    messages,
+                    refinedPrompt,
+                    "Prompt Refinement Attempted",
+                    "agent-model",
+                    java.util.Collections.emptyMap(),
+                    java.util.Collections.emptyMap());
         }
     }
 

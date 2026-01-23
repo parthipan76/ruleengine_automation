@@ -117,13 +117,13 @@ public class PromptRegistry {
     public String get(String key) {
         if (key == null || key.isEmpty()) {
             logger.warn("Attempted to get prompt with null or empty key");
-            return "Invalid prompt key: null or empty";
+            return null;
         }
 
         String prompt = prompts.get(key);
         if (prompt == null) {
             logger.warn("Prompt not found for key: {}", key);
-            return "Prompt not found for key: " + key;
+            return null;
         }
 
         logger.debug("Retrieved prompt for key: {}", key);

@@ -36,6 +36,10 @@ public class ScheduleExtractionAgent {
         public RuleTree<NodeData> getTree() {
             return (RuleTree<NodeData>) this.data().get("tree");
         }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
+        }
     }
 
     public ScheduleExtractionAgent(ChatLanguageModel lang4jService) {
@@ -57,17 +61,17 @@ public class ScheduleExtractionAgent {
     }
 
     private CompletableFuture<Map<String, Object>> extractNode(ScheduleState state) {
-        logger.info("ScheduleExtractionAgent: Executing Extract Node...");
+        logger.info("ScheduleExtractionAgent: Starting extraction...");
         RuleTree<NodeData> tree = state.getTree();
         if (tree == null) {
             return CompletableFuture.completedFuture(Map.of("failed", true));
         }
 
-        processNode(tree.getRoot());
+        processNode(tree.getRoot(), state.getTraceId());
         return CompletableFuture.completedFuture(Map.of("tree", tree));
     }
 
-    private void processNode(RuleNode<NodeData> node) {
+    private void processNode(RuleNode<NodeData> node, String traceId) {
         if (node == null)
             return;
 
@@ -76,21 +80,20 @@ public class ScheduleExtractionAgent {
             String scheduleText = node.getData().getInput();
             logger.info("Found Schedule node: {}", scheduleText);
 
+            String jsonResponse = null;
+            boolean success = false;
             try {
                 // Get prompt from registry
                 String promptTemplate = com.sixdee.text2rule.config.PromptRegistry.getInstance()
                         .get("schedule_parser_prompt");
                 String prompt = promptTemplate.replace("{{ $json.output.schedule }}", scheduleText);
 
-                logger.info("ScheduleExtractionAgent: Sending prompt to LLM for schedule parsing...");
+                logger.info("ScheduleExtractionAgent: Sending prompt to LLM...");
                 // Rate limit protection: 12-second delay
-                try {
-                    Thread.sleep(12000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                String jsonResponse = lang4jService.generate(prompt);
-                logger.info("ScheduleExtractionAgent: Received response from LLM");
+                // Rate limit
+                com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
+                jsonResponse = lang4jService.generate(prompt);
+                logger.info("ScheduleExtractionAgent: Received response from LLM.");
 
                 // Clean JSON response
                 jsonResponse = cleanJson(jsonResponse);
@@ -105,22 +108,60 @@ public class ScheduleExtractionAgent {
                 NodeData extractedData = new NodeData("ScheduleDetails", "", "", node.getData().getModelName(), "",
                         scheduleDetails);
 
+                
+
                 node.addChild(new RuleNode<>(extractedData));
                 logger.info("Added extracted schedule details to tree.");
 
+                success = true;
+
+                // Observability: Capture Event (Success)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", prompt);
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ScheduleExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Schedule Extracted",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
             } catch (Exception e) {
                 logger.error("Failed to parse schedule with LLM", e);
-                // Fallback to simple extraction
-                NodeData extractedData = new NodeData("ScheduleDetails", "", "", node.getData().getModelName(), "",
-                        "Schedule extraction failed: " + e.getMessage());
-                node.addChild(new RuleNode<>(extractedData));
+                jsonResponse = "Error: " + e.getMessage();
+
+                // Observability: Capture Event (Error)
+                java.util.List<java.util.Map<String, String>> messages = new java.util.ArrayList<>();
+                java.util.Map<String, String> userMessage = new java.util.HashMap<>();
+                userMessage.put("role", "user");
+                userMessage.put("content", scheduleText); // Fallback
+                messages.add(userMessage);
+
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        traceId,
+                        "ScheduleExtractionAgent",
+                        messages,
+                        jsonResponse,
+                        "Schedule Extraction Failed",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
+                // Rethrow exception to stop flow
+                throw new RuntimeException("Schedule Extraction Failed", e);
             }
         }
 
         // Recursively process children
         if (node.getChildren() != null) {
             for (RuleNode<NodeData> child : node.getChildren()) {
-                processNode(child);
+                processNode(child, traceId);
             }
         }
     }
@@ -173,9 +214,14 @@ public class ScheduleExtractionAgent {
     }
 
     public CompletableFuture<ScheduleState> execute(RuleTree<NodeData> tree) {
+        return execute(tree, null);
+    }
+
+    public CompletableFuture<ScheduleState> execute(RuleTree<NodeData> tree, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return compiledGraph.invoke(Map.of("tree", tree)).orElse(null);
+                return compiledGraph.invoke(Map.of("tree", tree, "traceId",
+                        traceId != null ? traceId : java.util.UUID.randomUUID().toString())).orElse(null);
             } catch (Exception e) {
                 logger.error("Error executing ScheduleExtractionAgent", e);
                 throw new RuntimeException(e);

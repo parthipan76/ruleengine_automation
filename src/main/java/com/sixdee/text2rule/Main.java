@@ -7,6 +7,8 @@ import com.sixdee.text2rule.exception.Text2RuleException;
 import com.sixdee.text2rule.workflow.DecompositionWorkflow;
 import com.sixdee.text2rule.workflow.WorkflowState;
 import com.sixdee.text2rule.dto.ValidationResult;
+import com.sixdee.text2rule.observability.IntegrationFactory;
+import com.sixdee.text2rule.view.ResultPresenter;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.slf4j.Logger;
@@ -15,7 +17,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 
 /**
- * Refactored Main application following SOLID principles.
+ * Main application class.
  * Uses ConfigurationManager for configuration.
  * Uses AgentFactory for agent creation.
  * Implements comprehensive error handling with custom exceptions.
@@ -28,6 +30,7 @@ public class Main {
         ChatLanguageModel chatLanguageModel = null;
         CompiledGraph<WorkflowState> app = null;
         DecompositionWorkflow graphBuilder = null;
+        WorkflowState finalState = null;
 
         try {
             logger.info("Application starting [version=1.0, timestamp={}]", System.currentTimeMillis());
@@ -35,38 +38,40 @@ public class Main {
             // Initialize LLM client using configuration
             chatLanguageModel = initializeLLMClient(ConfigurationManager.getInstance());
 
-            // Initialize factory with dependencies (reserved for future workflow
-            // enhancements)
-            // AgentFactory agentFactory = new AgentFactory(chatLanguageModel, config);
+            // Initialize Observability Worker
+            IntegrationFactory.getInstance().startWorkerThread(ConfigurationManager.getInstance());
 
             // Build workflow
             graphBuilder = new DecompositionWorkflow(chatLanguageModel);
             app = graphBuilder.build();
 
-            // Prepare input
-            Map<String, Object> inputs = Map.of("input",
-                    "Run this campaign weekly on Mondays and Tuesdays from 5 October 2024 to 5 October 2026, targeting subscribers based on their SMS revenue, preferred location, and recharge behavior. Subscribers whose SMS revenue in the last 30 days is exactly 15 RO, whose favorite location is Adimali, and whose total recharge in the last 30 days is at least 200 RO should receive a promotional SMS with Message ID 24, while subscribers whose SMS revenue in the last 30 days is greater than 15 RO, whose favorite location is Bengaluru, and whose total recharge in the last 30 days is at least 150 RO should receive a promotional SMS with Message ID 25. Subscribers who do not meet either of these criteria should be excluded from the campaign.");
+			/*
+			 * Map<String, Object> inputs = Map.of( "input",
+			 * "Run this campaign weekly on Mondays and Tuesdays from 5 October 2024 to 5 October 2026, targeting subscribers based on their SMS revenue, preferred location, and recharge behavior. Subscribers whose SMS revenue in the last 30 days is exactly 15 RO, whose favorite location is Adimali, and whose total recharge in the last 30 days is at least 200 RO should receive a promotional SMS with Message ID 24, while subscribers whose SMS revenue in the last 30 days is greater than 15 RO, whose favorite location is Bengaluru, and whose total recharge in the last 30 days is at least 150 RO should receive a promotional SMS with Message ID 25. Subscribers who do not meet either of these criteria should be excluded from the campaign."
+			 * , "traceId", java.util.UUID.randomUUID().toString());
+			 */
+        	
+			  Map<String, Object> inputs = Map.of( "input",
+"Run this SMS promotional campaign for prepaid mobile subscribers whose status is active or in grace (including grace1). Send the message using message ID 1413, and apply the Lead Policy and TRC_Policy at the schedule level. Schedule the campaign to run from 26th March 2025 at 6:15 AM until 31st December 2026 at 11:59 PM"			  , "traceId", java.util.UUID.randomUUID().toString());
+			 
 
-            logger.info("Invoking Decomposition Workflow [input_length={}]",
-                    ((String) inputs.get("input")).length());
+            
+            
+            logger.info("Invoking Decomposition Workflow [input_length={}]", ((String) inputs.get("input")).length());
 
             // Execute workflow
-            WorkflowState finalState = app.invoke(inputs)
+            finalState = app.invoke(inputs)
                     .orElseThrow(() -> new Text2RuleException("Graph execution failed to return state"));
 
             // Process validation results
             processValidationResults(finalState);
 
             // Check workflow failure status
-            if (finalState.isWorkflowFailed()) {
-                logger.error("Workflow failed [reason={}]", finalState.getFailureReason());
-            } else {
+            if (!finalState.isWorkflowFailed()) {
                 logger.info("Workflow execution completed [state={}]", finalState != null ? "available" : "null");
 
                 // Present all results using ResultPresenter (Facade)
-                new com.sixdee.text2rule.view.ResultPresenter(ConfigurationManager.getInstance()).renderTree(
-                        graphBuilder,
-                        finalState);
+                new ResultPresenter(ConfigurationManager.getInstance()).renderTree(graphBuilder, finalState);
             }
 
             logger.info("Application completed successfully");
@@ -82,7 +87,14 @@ public class Main {
             logger.error("Unexpected error [message={}]", e.getMessage(), e);
             System.exit(1);
         } finally {
-            cleanupResources(app);
+            logger.info("Cleaning up resources");
+            if (app != null) {
+                logger.debug("Workflow graph cleanup completed");
+                // Nullify the reference
+                app = null;
+            }
+            finalState = null;
+            logger.info("Application shutdown complete");
         }
     }
 
@@ -99,7 +111,7 @@ public class Main {
             logger.info("LLM client initialized [provider={}, model={}]",
                     config.getActiveProvider(),
                     config.getProviderModelName(config.getActiveProvider()));
-            return client;
+
         } catch (Exception e) {
             logger.error("Failed to initialize LLM client [error={}]", e.getMessage(), e);
             throw new ConfigurationException("LLM client initialization failed", e);
@@ -107,6 +119,7 @@ public class Main {
             // Resource cleanup handled by caller
             logger.debug("LLM client initialization completed");
         }
+        return client;
     }
 
     /**
@@ -138,35 +151,4 @@ public class Main {
         }
     }
 
-    /**
-     * // 1. Display workflow graph
-     * displayWorkflowGraph(graphBuilder);
-     * 
-     * // 2. Display consistency check results
-     * displayConsistencyResults(state);
-     * 
-     * // 3. Render tree using configured renderers (via factory)
-     * processTreeResults(state);
-     * 
-     * logger.info("Tree results processed successfully");
-     * } catch (Exception e) {
-     * logger.error("Failed to process tree results [error={}]", e.getMessage(), e);
-     * Cleanup resources before shutdown.
-     */
-    private static void cleanupResources(CompiledGraph<WorkflowState> app) {
-        try {
-            logger.info("Cleaning up resources");
-            if (app != null) {
-                logger.debug("Workflow graph cleanup completed");
-                // Nullify the reference
-                app = null;
-            }
-            logger.info("Application shutdown complete");
-        } catch (Exception e) {
-            logger.warn("Error during resource cleanup [error={}]", e.getMessage(), e);
-        } finally {
-            // Final cleanup
-            logger.debug("Resource cleanup finalized");
-        }
-    }
 }

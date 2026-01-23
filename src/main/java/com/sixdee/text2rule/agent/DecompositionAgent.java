@@ -4,12 +4,6 @@ import com.sixdee.text2rule.dto.DecompositionResult;
 import com.sixdee.text2rule.helper.TreeBuilderHelper;
 import com.sixdee.text2rule.model.NodeData;
 import com.sixdee.text2rule.model.RuleTree;
-import com.sixdee.text2rule.dto.DecompositionResult;
-import com.sixdee.text2rule.helper.TreeBuilderHelper;
-import com.sixdee.text2rule.model.NodeData;
-import com.sixdee.text2rule.model.RuleTree;
-import com.sixdee.text2rule.agent.ConsistencyAgent;
-// import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -129,6 +123,10 @@ public class DecompositionAgent {
 
         public boolean isFailed() {
             return (boolean) this.data().getOrDefault("failed", false);
+        }
+
+        public String getTraceId() {
+            return (String) this.data().get("traceId");
         }
     }
 
@@ -315,22 +313,42 @@ public class DecompositionAgent {
         }
     }
 
+    private java.util.List<java.util.Map<String, String>> convertMessagesToEventFormat(List<ChatMessage> messages) {
+        java.util.List<java.util.Map<String, String>> eventMessages = new java.util.ArrayList<>();
+        for (ChatMessage msg : messages) {
+            java.util.Map<String, String> m = new java.util.HashMap<>();
+            if (msg instanceof SystemMessage) {
+                m.put("role", "system");
+                m.put("content", msg.text());
+            } else if (msg instanceof UserMessage) {
+                m.put("role", "user");
+                m.put("content", msg.text());
+            } else if (msg instanceof AiMessage) {
+                m.put("role", "assistant");
+                m.put("content", msg.text() != null ? msg.text() : "");
+            } else if (msg instanceof ToolExecutionResultMessage) {
+                m.put("role", "tool"); // Or appropriate role
+                m.put("content", msg.text());
+            }
+            eventMessages.add(m);
+        }
+        return eventMessages;
+    }
+
     private CompletableFuture<Map<String, Object>> agentNode(DecompositionState state) {
-        logger.info("DecompositionAgent: Consulting LLM...");
+        logger.info("DecompositionAgent: Starting agent execution...");
+        logger.info("DecompositionAgent: Sending prompt to LLM...");
         List<ChatMessage> messages = state.getConversation();
 
-        // Rate limit protection: 12-second delay
-        try {
-            Thread.sleep(12000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Rate limit
+        com.sixdee.text2rule.util.RateLimiter.getInstance().apply();
         Response<AiMessage> response;
         if (toolSpecifications == null || toolSpecifications.isEmpty()) {
             response = client.generate(messages);
         } else {
             response = client.generate(messages, toolSpecifications);
         }
+        logger.info("DecompositionAgent: Received response from LLM.");
         state.addMessage(response.content());
 
         List<Map<String, Object>> serialized = messages.stream().map(DecompositionAgent::serializeMessage)
@@ -347,16 +365,40 @@ public class DecompositionAgent {
                     DecompositionResult res = objectMapper.readValue(json, DecompositionResult.class);
                     NodeData rootData = new NodeData(state.getInput(), "llama-3.3-70b-versatile");
                     RuleTree<NodeData> tree = treeBuilder.buildTreeFromDecomposition(rootData, res);
+
+                    // Observability: Capture Event
+                    java.util.List<java.util.Map<String, String>> eventMessages = convertMessagesToEventFormat(
+                            messages);
+
+                    com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                            state.getTraceId(),
+                            "DecompositionAgent",
+                            eventMessages,
+                            json,
+                            "Success parsing agent text",
+                            "agent-model",
+                            java.util.Collections.emptyMap(),
+                            java.util.Collections.emptyMap());
+
                     return CompletableFuture
                             .completedFuture(Map.of("conversation", serialized, "result", res, "tree", tree));
                 }
             } catch (Exception e) {
                 logger.warn("Failed to parse final decomposition result from agent text", e);
-            }
+                // Observability: Capture Event
+                // Observability: Capture Event
+                java.util.List<java.util.Map<String, String>> eventMessages = convertMessagesToEventFormat(messages);
 
-            // Fallback: Check if tools have the result
-            if (decompositionTools.getResult() != null && decompositionTools.getTree() != null) {
-                logger.info("Using stored result from tools as fallback");
+                com.sixdee.text2rule.observability.IntegrationFactory.getInstance().recordEvent(
+                        state.getTraceId(),
+                        "DecompositionAgent",
+                        eventMessages,
+                        decompositionTools.getResult(),
+                        "Fallback to tools result",
+                        "agent-model",
+                        java.util.Collections.emptyMap(),
+                        java.util.Collections.emptyMap());
+
                 return CompletableFuture
                         .completedFuture(Map.of("conversation", serialized,
                                 "result", decompositionTools.getResult(),
@@ -417,10 +459,14 @@ public class DecompositionAgent {
     }
 
     public CompletableFuture<DecompositionState> execute(String input) {
-        return execute(input, null);
+        return execute(input, null, null);
     }
 
     public CompletableFuture<DecompositionState> execute(String input, String customSystemPrompt) {
+        return execute(input, customSystemPrompt, null);
+    }
+
+    public CompletableFuture<DecompositionState> execute(String input, String customSystemPrompt, String traceId) {
         return CompletableFuture.supplyAsync(() -> {
             List<ChatMessage> messages = null;
             try {
@@ -433,7 +479,8 @@ public class DecompositionAgent {
                         .map(DecompositionAgent::serializeMessage)
                         .collect(Collectors.toList());
 
-                return compiledGraph.invoke(Map.of("conversation", serializedInit, "input", input)).orElse(null);
+                return compiledGraph.invoke(Map.of("conversation", serializedInit, "input", input, "traceId",
+                        traceId != null ? traceId : java.util.UUID.randomUUID().toString())).orElse(null);
             } catch (Exception e) {
                 logger.error("Error executing DecompositionAgent", e);
                 throw new RuntimeException(e);
