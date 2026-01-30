@@ -52,7 +52,7 @@ public class Main {
 			 */
         	
 			  Map<String, Object> inputs = Map.of( "input",
-"Run this SMS promotional campaign for prepaid mobile subscribers whose status is active or in grace (including grace1). Send the message using message ID 1413, and apply the Lead Policy and TRC_Policy at the schedule level. Schedule the campaign to run from 26th March 2025 at 6:15 AM until 31st December 2026 at 11:59 PM"			  , "traceId", java.util.UUID.randomUUID().toString());
+"For high-value customers whose total recharge in the last 30 days is greater than 200 RO and favorite location is Mumbai, send a promotional SMS with Message ID 50 and grant a bonus of 10GB Data valid for 7 days. For mid-value customers whose total recharge is between 100 and 199 RO and location is Delhi, send Message ID 51 with 5GB data bonus. Apply 50% random sampling to all eligible users. Do not send more than 1 message per week. Run this campaign from 1st November 2024 to 30th November 2024."			  , "traceId", java.util.UUID.randomUUID().toString());
 			 
 
             

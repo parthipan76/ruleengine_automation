@@ -77,6 +77,27 @@ public class AgentFactory {
             throw new ConfigurationException("Failed to create ConsistencyAgent", e);
         }
     }
+    
+    
+ // In AgentFactory.java constructor or init method
+    public IAgent createAgent(String agentType, LLMClientFactory llmClient) {
+        switch (agentType.toLowerCase()) {
+            // Existing agents...
+            case "action_extraction":
+                return new ActionExtractionAgent(llmClient);
+            
+            // NEW AGENTS
+            case "bonus_extraction":
+                return new BonusExtractionAgent(llmClient);
+            case "policy_extraction":
+                return new PolicyExtractionAgent(llmClient);
+            case "message_generation":
+                return new MessageGenerationAgent(llmClient);
+            
+            default:
+                throw new IllegalArgumentException("Unknown agent type: " + agentType);
+        }
+    }
 
     /**
      * Create PromptRefinementAgent instance.

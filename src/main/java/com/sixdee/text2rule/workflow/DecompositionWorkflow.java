@@ -1,35 +1,38 @@
 package com.sixdee.text2rule.workflow;
 
+import static org.bsc.langgraph4j.StateGraph.END;
+import static org.bsc.langgraph4j.StateGraph.START;
+
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
+
+import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.GraphRepresentation;
+import org.bsc.langgraph4j.StateGraph;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sixdee.text2rule.agent.ActionExtractionAgent;
 import com.sixdee.text2rule.agent.ConditionExtractionAgent;
 import com.sixdee.text2rule.agent.ConsistencyAgent;
 import com.sixdee.text2rule.agent.DecompositionAgent;
+import com.sixdee.text2rule.agent.IAgent;
+import com.sixdee.text2rule.agent.PolicyExtractionAgent;
 import com.sixdee.text2rule.agent.PromptRefinementAgent;
-import com.sixdee.text2rule.agent.ScheduleExtractionAgent;
-
 import com.sixdee.text2rule.agent.RuleConverterAgent;
+import com.sixdee.text2rule.agent.ScheduleExtractionAgent;
+import com.sixdee.text2rule.agent.UnifiedRuleAgent;
 import com.sixdee.text2rule.agent.ValidationAgent;
 import com.sixdee.text2rule.config.PromptRegistry;
 import com.sixdee.text2rule.dto.DecompositionResult;
 import com.sixdee.text2rule.model.NodeData;
 import com.sixdee.text2rule.model.RuleTree;
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.GraphRepresentation;
-import org.bsc.langgraph4j.StateGraph;
 import com.sixdee.text2rule.view.AsciiRenderer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import com.sixdee.text2rule.agent.RuleConverterAgent;
-import com.sixdee.text2rule.agent.UnifiedRuleAgent;
-
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-
-import static org.bsc.langgraph4j.StateGraph.END;
-import static org.bsc.langgraph4j.StateGraph.START;
+import ch.qos.logback.core.boolex.Matcher;
+import dev.langchain4j.model.chat.ChatLanguageModel;
 
 public class DecompositionWorkflow {
     private static final Logger logger = LoggerFactory.getLogger(DecompositionWorkflow.class);
@@ -565,6 +568,29 @@ public class DecompositionWorkflow {
                             "scheduleFeedback", feedback,
                             "tree", consistencyState.getTree() != null ? consistencyState.getTree() : tree);
                 });
+    }
+    
+    
+    
+ // After schedule extraction, add:
+    private void extractPolicy(WorkflowState state) {
+        String policyText = state.get("decomposition_result.policy");
+        if (policyText != null && !policyText.isEmpty()) {
+            IAgent policyAgent = agentFactory.createAgent("policy_extraction", llmClient);
+            String policyResult = policyAgent.execute(policyText);
+            state.put("policy_extraction_result", policyResult);
+            
+            // Extract LeadPolicyId for schedule
+            String policyDsl = PolicyExtractionAgent.toDslFormat(policyResult);
+            state.put("lead_policy_id", extractPolicyId(policyDsl));
+        }
+    }
+
+    private String extractPolicyId(String policyDsl) {
+        // Extract ID from: LeadPolicyId="167"
+        Pattern pattern = Pattern.compile("LeadPolicyId=\"(\\d+)\"");
+        Matcher matcher = pattern.matcher(policyDsl);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private CompletableFuture<Map<String, Object>> refineSchedulePromptNode(WorkflowState state) {

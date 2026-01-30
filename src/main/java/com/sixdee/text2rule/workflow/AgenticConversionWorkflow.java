@@ -1,32 +1,34 @@
 package com.sixdee.text2rule.workflow;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sixdee.text2rule.agent.ActionExtractionAgent;
-import com.sixdee.text2rule.agent.ConsistencyAgent;
-import com.sixdee.text2rule.agent.DecompositionAgent;
-import com.sixdee.text2rule.agent.PromptRefinementAgent;
-import com.sixdee.text2rule.agent.ConditionExtractionAgent;
-import com.sixdee.text2rule.agent.ValidationAgent;
-import com.sixdee.text2rule.config.PromptRegistry;
-import com.sixdee.text2rule.dto.DecompositionResult;
-import com.sixdee.text2rule.model.NodeData;
-import com.sixdee.text2rule.model.RuleNode;
-import com.sixdee.text2rule.model.RuleTree;
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.GraphRepresentation;
-import org.bsc.langgraph4j.StateGraph;
-import com.sixdee.text2rule.view.AsciiRenderer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static org.bsc.langgraph4j.StateGraph.END;
+import static org.bsc.langgraph4j.StateGraph.START;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-import static org.bsc.langgraph4j.StateGraph.END;
-import static org.bsc.langgraph4j.StateGraph.START;
+import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.GraphRepresentation;
+import org.bsc.langgraph4j.StateGraph;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sixdee.text2rule.agent.ActionExtractionAgent;
+import com.sixdee.text2rule.agent.ConditionExtractionAgent;
+import com.sixdee.text2rule.agent.ConsistencyAgent;
+import com.sixdee.text2rule.agent.DecompositionAgent;
+import com.sixdee.text2rule.agent.PromptRefinementAgent;
+import com.sixdee.text2rule.agent.ValidationAgent;
+import com.sixdee.text2rule.config.PromptRegistry;
+import com.sixdee.text2rule.dto.DecompositionResult;
+import com.sixdee.text2rule.model.NodeData;
+import com.sixdee.text2rule.model.RuleNode;
+import com.sixdee.text2rule.model.RuleTree;
+import com.sixdee.text2rule.view.AsciiRenderer;
+
+import dev.langchain4j.model.chat.ChatLanguageModel;
 
 public class AgenticConversionWorkflow {
     private static final Logger logger = LoggerFactory.getLogger(AgenticConversionWorkflow.class);
